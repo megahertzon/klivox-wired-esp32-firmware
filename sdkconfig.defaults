@@ -1,0 +1,10 @@
+# Klivox Wired ESP32 baseline. Existing sdkconfig values take precedence.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+CONFIG_EXAMPLE_PROV_TRANSPORT_BLE=y
+CONFIG_EXAMPLE_PROV_SECURITY_VERSION_2=y
+CONFIG_EXAMPLE_PROV_SEC2_DEV_MODE=y
+
+# Leave RX ISR and encoders in IRAM. Move the TX ISR to flash to fit the
+# combined Wi-Fi/BLE + RMT image in ESP32 IRAM. TX cache-safe mode stays off.
+CONFIG_RMT_TX_ISR_HANDLER_IN_IRAM=n

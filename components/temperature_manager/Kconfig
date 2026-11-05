@@ -1,0 +1,20 @@
+menu "Klivox temperature sensor"
+
+    config KLIVOX_TEMPERATURE_GPIO
+        int "DS18B20 1-Wire GPIO"
+        range 0 48
+        default 18
+        help
+            Use an available input/output GPIO, with an external 4.7 kOhm
+            pull-up to 3.3 V. GPIO18 is the default for Klivox Wired ESP32.
+            Select a suitable GPIO when reusing this component on another board.
+
+    config KLIVOX_TEMPERATURE_PERIOD_SECONDS
+        int "Temperature sampling period (seconds)"
+        range 1 3600
+        default 5
+        help
+            Start a measurement every configured period. Conversion waits
+            inside the sensor task, without blocking app_main or event callbacks.
+
+endmenu
