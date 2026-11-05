@@ -1,0 +1,115 @@
+menu "Klivox Wi-Fi manager configuration"
+
+    choice EXAMPLE_PROV_TRANSPORT
+        bool "Provisioning Transport"
+        default EXAMPLE_PROV_TRANSPORT_SOFTAP if IDF_TARGET_ESP32S2
+        default EXAMPLE_PROV_TRANSPORT_BLE
+        help
+            Wi-Fi provisioning component offers both, SoftAP and BLE transports. Choose any one.
+
+        config EXAMPLE_PROV_TRANSPORT_BLE
+            bool "BLE"
+            select BT_ENABLED
+            depends on !IDF_TARGET_ESP32S2
+        config EXAMPLE_PROV_TRANSPORT_SOFTAP
+            bool "Soft AP"
+            select LWIP_IPV4
+    endchoice
+
+    choice EXAMPLE_PROV_SECURITY_VERSION
+        bool "Protocomm security version"
+        default EXAMPLE_PROV_SECURITY_VERSION_2
+        help
+            Wi-Fi provisioning component offers 3 security versions.
+            The example offers a choice between security version 1 and 2.
+
+        config EXAMPLE_PROV_SECURITY_VERSION_1
+            bool "Security version 1"
+            select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_1
+
+        config EXAMPLE_PROV_SECURITY_VERSION_2
+            bool "Security version 2"
+            select ESP_PROTOCOMM_SUPPORT_SECURITY_VERSION_2
+    endchoice
+
+    choice EXAMPLE_PROV_MODE
+        bool "Security version 2 mode"
+        depends on EXAMPLE_PROV_SECURITY_VERSION_2
+        default EXAMPLE_PROV_SEC2_DEV_MODE
+
+        config EXAMPLE_PROV_SEC2_DEV_MODE
+            bool "Security version 2 development mode"
+            depends on EXAMPLE_PROV_SECURITY_VERSION_2
+            help
+                This enables the development mode for
+                security version 2.
+                Please note that this mode is NOT recommended for production purpose.
+
+        config EXAMPLE_PROV_SEC2_PROD_MODE
+            bool "Security version 2 production mode"
+            depends on EXAMPLE_PROV_SECURITY_VERSION_2
+            help
+                This enables the production mode for
+                security version 2.
+    endchoice
+
+    config EXAMPLE_PROV_TRANSPORT
+        int
+        default 1 if EXAMPLE_PROV_TRANSPORT_BLE
+        default 2 if EXAMPLE_PROV_TRANSPORT_SOFTAP
+
+    config EXAMPLE_PROV_ENABLE_APP_CALLBACK
+        bool "Enable provisioning manager app callback"
+        default n
+        help
+            This is for advanced use-cases like modifying Wi-Fi configuration parameters. This
+            executes a blocking app callback when any provisioning event is triggered.
+
+    config EXAMPLE_RESET_PROV_MGR_ON_FAILURE
+        bool
+        default y
+        prompt "Allow retry of failed initial provisioning"
+        help
+            Only while initial provisioning is active, discard the newly rejected
+            credentials and let the phone submit corrected credentials.
+            Never used for an already validated connection or a normal disconnection.
+
+    config EXAMPLE_PROV_MGR_CONNECTION_CNT
+        int
+        default 5
+        range 1 20
+        prompt "Max connection attempts before resetting provisioning state machine"
+        depends on EXAMPLE_RESET_PROV_MGR_ON_FAILURE
+        help
+            Attempts to validate newly received credentials. On failure, only
+            those unvalidated credentials are discarded so the phone can retry.
+            Saved credentials from a normal boot are never reset by this option.
+
+    config KLIVOX_WIFI_RETRY_INITIAL_MS
+        int "Initial Wi-Fi reconnect delay (milliseconds)"
+        range 1000 30000
+        default 1000
+
+    config KLIVOX_WIFI_RETRY_MAX_MS
+        int "Maximum Wi-Fi reconnect delay (milliseconds)"
+        range 30000 300000
+        default 60000
+        help
+            Reconnection uses a one-shot timer and exponential backoff.
+            Initial provisioning connection attempts remain owned by ESP-IDF.
+
+    config EXAMPLE_PROV_SHOW_QR
+        bool "Show provisioning QR code"
+        default y
+        help
+            Show the QR code for provisioning.
+
+    config EXAMPLE_PROV_USING_BLUEDROID
+        bool
+        depends on (BT_BLUEDROID_ENABLED && (IDF_TARGET_ESP32C3 || IDF_TARGET_ESP32S3))
+        select BT_BLE_42_FEATURES_SUPPORTED
+        default y
+        help
+            This enables BLE 4.2 features for Bluedroid.
+
+endmenu
