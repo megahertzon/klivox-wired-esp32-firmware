@@ -146,7 +146,7 @@ desactivar `RMT_TX_ISR_HANDLER_IN_IRAM` y `RMT_ENCODER_FUNC_IN_IRAM` manualmente
 en `menuconfig`, porque los defaults no sustituyen valores existentes. No es
 una exigencia propia del decodificador IR para todas las placas.
 
-Validación en Klivox Wired con ESP-IDF 5.5.6: `idf.py build` terminó con código
+Validación de IR previa al buzzer con ESP-IDF 5.5.6: `idf.py build` terminó con código
 0, sin advertencias del compilador/enlazador. El binario mide 1.479.760 bytes;
 quedan 56.240 bytes en la partición de aplicación (4 % aproximado) y 396 bytes
 en la región IRAM. El comprobador de tamaños avisa del escaso margen de la

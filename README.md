@@ -5,13 +5,16 @@ conserva el Provisioning Manager oficial y no incorpora un cliente MQTT.
 Incluye adquisición periódica de temperatura con un DS18B20 externo.
 También captura y decodifica controles IR mediante un VS1838B, como el proyecto
 `on_off_light`, con detección general y salida RAW para señales desconocidas.
+Un buzzer activo emite un pulso corto al capturar una trama IR no truncada.
 
 ## Archivos
 
 - `main/main.c`: inicialización general; inicia conectividad y retorna sin esperar IP.
   También inicia el módulo de temperatura, incluso si falla la conectividad.
-- `main/CMakeLists.txt`: compila exclusivamente `main.c` y declara sus dependencias
-  de `wifi_manager`, `temperature_manager` e `ir_receiver`.
+- `main/app_feedback.c`: conecta las capturas IR con el aviso sonoro usando las
+  APIs públicas, sin acoplar el driver IR al buzzer.
+- `main/CMakeLists.txt`: compila `main.c` y `app_feedback.c`, y declara sus
+  dependencias de `wifi_manager`, `temperature_manager`, `ir_receiver` y `buzzer`.
 - `main/idf_component.yml`: declara la versión de ESP-IDF del proyecto
   (`>=5.5.6,<5.6`). `dependencies.lock` fija las dependencias resueltas.
 - `components/wifi_manager/wifi_manager.c`: NVS, netif, event loop, Wi-Fi Station,
@@ -28,6 +31,8 @@ También captura y decodifica controles IR mediante un VS1838B, como el proyecto
   resultado. Incluye su propia configuración y dependencias.
 - `components/ir_receiver/`: receptor IR con API C, implementación C++, callback
   y consulta de la última captura. Usa `jorgecis/irremoteidf` 1.0.2.
+- `components/buzzer/`: buzzer activo mediante GPIO y temporizador de apagado,
+  con solicitudes de pulso asíncronas y sin dependencias externas.
 - `sdkconfig.defaults`: parámetros base del ESP32 y ajuste de IRAM para RMT;
   los valores de un `sdkconfig` existente tienen prioridad sobre estos defaults.
 
@@ -248,7 +253,7 @@ la tabla de particiones ni el SDK. El margen de IRAM es distinto del espacio
 libre en flash y debe revisarse al ampliar el firmware. No se ha validado
 todavía la integración de estos componentes en otro SoC.
 La compilación con IR deja **396 bytes libres en IRAM**; la partición de
-aplicación conserva **56.240 bytes libres (aproximadamente 4 %)**.
+aplicación conserva **55.248 bytes libres (aproximadamente 4 %)** con el buzzer.
 
 Este ajuste se aplica al `sdkconfig` local y se incluye en `sdkconfig.defaults`
 para nuevas configuraciones. Si se conserva un `sdkconfig` anterior, desactivar
@@ -354,9 +359,38 @@ callback con metadatos y vista temporal de RAW. Detalles de memoria, límites de
 la biblioteca, portabilidad y pruebas en
 [components/ir_receiver/README.md](components/ir_receiver/README.md).
 
-Validación de IR: `idf.py build` finalizó con código 0 en ESP-IDF 5.5.6. El
+Validación de IR previa al buzzer: `idf.py build` finalizó con código 0 en ESP-IDF 5.5.6. El
 binario ocupa **1.479.760 bytes**. No hubo advertencias del compilador/enlazador;
 el comprobador de tamaños advierte que la partición está cerca de llenarse (4 %
 libre). La tabla binaria de particiones sigue idéntica. Log en
 `build/ir_receiver_build.log`. No se realizó flash ni borrado; quedan pendientes
 las pruebas de recepción real y coexistencia con BLE/Wi-Fi y DS18B20.
+
+## Aviso sonoro al capturar IR
+
+`components/buzzer` controla un buzzer activo mediante transistor NPN desde
+**GPIO25**, con un pulso nominal de **80 ms**. La conexión con el receptor está
+en `main/app_feedback.c` y usa su callback público; el componente IR conserva
+su independencia y la captura en CPU1.
+
+Una captura con tiempos y sin `overflow` solicita un pitido, también si el
+protocolo es desconocido. Si ya está sonando se omite el nuevo pedido, sin
+extenderlo ni encolarlo. Un temporizador apaga la salida, sin esperar en la
+tarea IR y sin generar sonidos al inicializar. Una confirmación sonora indica
+recepción, no que el aire haya ejecutado el comando.
+
+En `menuconfig → Component config → Klivox active buzzer` se cambian GPIO y
+duración. La aplicación comprueba conflictos con GPIO18 (DS18B20) y GPIO27 (IR)
+antes de configurar la salida. Ver el circuito con NPN, resistencia de base,
+pull-down y alimentación externa en
+[components/buzzer/README.md](components/buzzer/README.md).
+
+Validación del buzzer: `idf.py build` finalizó con código 0 en ESP-IDF 5.5.6,
+sin advertencias de C/enlazado. El firmware ocupa 1.480.752 bytes; quedan 55.248
+bytes en la partición de aplicación (4 % aproximado) y 396 bytes de IRAM. Se
+mantiene el aviso del comprobador de tamaños por el escaso margen. Se verificó
+que las implementaciones de Wi-Fi, IR y DS18B20 y la tabla binaria de particiones
+siguen idénticas; solo se añadieron dos valores efectivos de configuración,
+GPIO25 y pulso de 80 ms. El log está en `build/buzzer_build.log`. No se ejecutó
+flash ni borrado; el sonido y la coexistencia física con sensores/radios quedan
+pendientes de probar con el circuito conectado.
