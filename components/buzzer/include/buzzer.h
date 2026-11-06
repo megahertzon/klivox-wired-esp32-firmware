@@ -26,6 +26,12 @@ esp_err_t buzzer_init(const buzzer_config_t *config);
  */
 esp_err_t buzzer_beep(uint32_t duration_ms);
 
+/** Request 1..8 pulses, each 50..1000 ms, with 50..1000 ms gaps for count > 1.
+ * Immediate, task-context API. Reserves the buzzer across the complete pattern,
+ * including gaps. Busy returns ESP_ERR_TIMEOUT; nothing is queued or extended.
+ */
+esp_err_t buzzer_beep_pattern(unsigned count, uint32_t duration_ms, uint32_t gap_ms);
+
 #ifdef __cplusplus
 }
 #endif

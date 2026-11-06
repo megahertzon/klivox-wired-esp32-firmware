@@ -50,8 +50,13 @@ reutilizarlo, elegir un GPIO libre de la placa y comprobar los conflictos propio
   contexto de tarea. `ESP_ERR_TIMEOUT` indica que ya está sonando: el pedido se
   omite, sin encolarlo ni prolongar el pitido actual.
 
-El callback de `esp_timer` pone la salida a LOW y libera el semáforo para el
-siguiente pulso. Si falla el arranque del temporizador, se fuerza LOW antes de
+- `buzzer_beep_pattern(count, duration_ms, gap_ms)`: solicita 1–8 pitidos de
+  50–1000 ms, con pausas de 50–1000 ms cuando hay más de uno. Retorna enseguida;
+  mantiene reservado el buzzer durante toda la secuencia, incluidas las pausas.
+  Si está ocupado devuelve `ESP_ERR_TIMEOUT`, sin encolar ni extender el sonido.
+
+El callback de `esp_timer` alterna ON/OFF y solo libera el semáforo tras el último
+pitido. `buzzer_beep()` conserva la semántica de un único pulso. Si falla el arranque del temporizador, se fuerza LOW antes de
 devolver el error. Los recursos viven durante este arranque. No se modifican
 NVS ni particiones, y no se introducen dependencias externas.
 
@@ -102,3 +107,17 @@ Binario de 1.480.752 bytes, 55.248 bytes libres en la partición de aplicación
 (4 % aproximado) y 396 bytes de IRAM. El comprobador mantiene el aviso de
 partición casi llena. Las implementaciones de los sensores y Wi-Fi y la tabla
 binaria de particiones se compararon sin cambios. La prueba física está pendiente.
+
+## Confirmación SETUP
+
+`main/app_feedback.c` programa dos pitidos de 100 ms con pausa de 100 ms al
+confirmar la pulsación SETUP de 5 segundos. El componente buzzer desconoce ese
+significado: solo ejecuta el patrón. Si un aviso IR ya suena, la aplicación
+suspende nuevos avisos IR y reintenta con un temporizador hasta reservar la
+pareja. Durante la pausa de la pareja, los avisos IR se rechazan por ocupado.
+El reset Wi-Fi/BLE continúa sin esperar a que termine el sonido.
+
+Probar en hardware una pulsación corta (sin sonido), 5 segundos (dos tonos),
+15 segundos (solo una pareja) y una segunda pulsación tras liberar (otra pareja).
+Repetir con tráfico IR para comprobar la separación de los dos tonos y que el
+buzzer termina LOW. Verificar también el pitido IR único después de SETUP.

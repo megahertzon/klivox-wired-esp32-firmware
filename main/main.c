@@ -5,6 +5,7 @@
 #include "sdkconfig.h"
 #include "temperature_manager.h"
 #include "wifi_manager.h"
+#include "app_setup.h"
 
 void app_main(void)
 {
@@ -63,6 +64,11 @@ void app_main(void)
     }
     if (err != ESP_OK) {
         ESP_LOGE("KLIVOX", "Digital inputs initialization failed: %s (check GPIO conflicts)", esp_err_to_name(err));
+    }
+
+    err = app_setup_init();
+    if (err != ESP_OK) {
+        ESP_LOGE("KLIVOX", "SETUP initialization failed: %s", esp_err_to_name(err));
     }
 
     /* Connectivity, temperature and IR reception continue independently. */

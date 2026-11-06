@@ -38,6 +38,8 @@ la recepción IR. El movimiento del componente no cambia ese orden.
   el controlador Wi-Fi y el manager oficial; comprueba credenciales guardadas.
 - `wifi_manager_start()`: conecta con las credenciales existentes o inicia el
   servicio de aprovisionamiento. No anuncia BLE cuando ya está provisionado.
+- `wifi_manager_reset_credentials()`: solicita borrado exclusivo de Station y
+  reinicio de BLE; resultado asíncrono mediante eventos.
 - `wifi_manager_is_connected()`: instantánea de disponibilidad IPv4.
 - `wifi_manager_is_provisioned()`: credenciales detectadas al arrancar o alta
   inicial validada; no depende de que el AP esté disponible en ese momento.
@@ -56,22 +58,32 @@ Se conservan los símbolos `EXAMPLE_PROV_*` y `KLIVOX_WIFI_RETRY_*` para que los
 valores actuales de `sdkconfig` y `sdkconfig.defaults` sigan siendo válidos.
 
 La configuración Wired conserva BLE, Security 2 Development, nombre de servicio,
-UUID, salt/verifier, credenciales de desarrollo y QR existentes. La rama de
+UUID, salt/verifier y credenciales de desarrollo existentes. La rama de
 producción requiere material único por dispositivo y sigue sin implementar;
 devuelve un error en lugar de usar silenciosamente el material de desarrollo.
 
-El módulo no registra la contraseña de la red. El QR de desarrollo sigue
-conteniendo el PoP de aprovisionamiento, que es distinto de esa contraseña.
+El módulo no registra la contraseña de la red. El QR y su URL ya no se imprimen,
+pues contienen el PoP. Usar el QR existente o entrada manual en la app.
 No borra NVS ante errores de inicialización ni elimina credenciales por perder
 temporalmente el AP. La corrección de credenciales nuevas rechazadas durante
 el alta inicial conserva el comportamiento del ejemplo oficial.
 
-Después de aprovisionar se libera el manager y la memoria Bluetooth. La
-reconexión normal usa un temporizador con espera progresiva de 1 a 60 segundos.
-No hay API de parada ni reprovisionamiento durante el mismo arranque: la
-liberación de memoria BLE forma parte del ciclo de vida actual. Este módulo
-es el propietario del controlador Wi-Fi; no inicializar otro driver/manager
-de red sobre él desde otro componente.
+Después de aprovisionar se liberan el manager y el transporte, conservando la
+memoria BLE reutilizable (`WIFI_PROV_EVENT_HANDLER_NONE`). El controlador,
+netifs y handlers de aplicación se inicializan una sola vez. Una tarea de control
+serializa arranque, cierre y restablecimiento; los callbacks no esperan ese trabajo.
+La reconexión normal mantiene el backoff de 1 a 60 segundos.
+
+El restablecimiento cancela reconexiones, cierra el manager si aún existe,
+detiene Wi-Fi y drena eventos antiguos. Persiste una configuración Station vacía
+en FLASH y crea un manager nuevo con la misma seguridad. Se evita
+`wifi_prov_mgr_reset_provisioning()` porque en 5.5.6 usa `esp_wifi_restore()`;
+no se necesita restablecer otras opciones Wi-Fi. No se borra toda la NVS.
+`ESP_OK` en la API de reset indica aceptación; los eventos informan del resultado.
+Solicitudes concurrentes se rechazan; una vez terminada se puede repetir.
+
+Ver el procedimiento SETUP y la matriz de pruebas físicas en el README principal.
+Las mediciones de heap, radio y persistencia siguen pendientes en hardware.
 
 ## Validación de la extracción
 
@@ -90,5 +102,5 @@ No se cargó firmware ni se borró memoria para validar esta extracción.
 Después de una carga autorizada, comprobar reconexión con credenciales guardadas,
 persistencia tras cortar alimentación y recuperación al restaurar el AP. Para
 revisar el alta BLE, usar una unidad sin credenciales y comprobar Security 2,
-obtención de IP y liberación de Bluetooth. Comprobar también que siguen los logs
+obtención de IP y cierre del transporte Bluetooth. Comprobar también que siguen los logs
 del DS18B20 y las capturas IR. La compilación no sustituye esas pruebas físicas.

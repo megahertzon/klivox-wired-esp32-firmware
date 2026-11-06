@@ -9,6 +9,8 @@ extern "C" {
 
 /** Application wiring/policy; reusable drivers remain independent. */
 esp_err_t app_feedback_init(void);
+/** Schedule two 100 ms beeps with a 100 ms gap; never waits for completion. */
+void app_feedback_on_setup(void);
 void app_feedback_on_ir_frame(const ir_receiver_frame_t *frame,
                               const ir_receiver_raw_view_t *raw, void *user_ctx);
 

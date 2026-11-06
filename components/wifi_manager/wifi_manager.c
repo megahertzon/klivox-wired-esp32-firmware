@@ -13,6 +13,7 @@
 #include <freertos/FreeRTOS.h>
 #include <stdint.h>
 #include <freertos/event_groups.h>
+#include <freertos/task.h>
 
 #include "wifi_manager.h"
 #include <esp_check.h>
@@ -33,9 +34,8 @@
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
 #include <wifi_provisioning/scheme_softap.h>
 #endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
-#include "qrcode.h"
 
-static const char *TAG = "wifi_manager";
+static const char *TAG = "KLIVOX_WIFI";
 
 #if CONFIG_EXAMPLE_PROV_SECURITY_VERSION_2
 #if CONFIG_EXAMPLE_PROV_SEC2_DEV_MODE
@@ -107,7 +107,10 @@ static esp_err_t get_sec2_verifier(const char **verifier, uint16_t *verifier_len
 
 ESP_EVENT_DEFINE_BASE(WIFI_MANAGER_EVENT);
 static ESP_EVENT_DEFINE_BASE(WIFI_MANAGER_INTERNAL_EVENT);
-enum { RECONNECT_DUE };
+enum { RECONNECT_DUE, RESET_REQUEST, RESET_DRAINED, PROVISIONING_RELEASED };
+#define WORK_START BIT0
+#define WORK_END BIT1
+#define WORK_RESET BIT2
 
 #define CONNECTED_BIT       BIT0
 #define PROVISIONED_BIT     BIT1
@@ -116,13 +119,18 @@ enum { RECONNECT_DUE };
 #define STA_RUNNING_BIT    BIT4
 #define ASSOCIATED_BIT     BIT5
 #define MANAGER_BIT        BIT6
-
-#define PROV_QR_VERSION         "v1"
-#define PROV_TRANSPORT_SOFTAP   "softap"
-#define PROV_TRANSPORT_BLE      "ble"
-#define QRCODE_BASE_URL         "https://espressif.github.io/esp-jumpstart/qrcode.html"
+#define RESET_BIT          BIT7
+#define DRAINED_BIT        BIT8
+#define START_DONE_BIT     BIT9
 
 static EventGroupHandle_t s_state;
+static TaskHandle_t s_control_task;
+static portMUX_TYPE s_request_lock = portMUX_INITIALIZER_UNLOCKED;
+static bool s_reset_pending;
+static esp_err_t init_provisioning_manager(void);
+static esp_err_t start_provisioning(void);
+static esp_err_t start_connectivity(void);
+static void control_task(void *arg);
 static esp_timer_handle_t s_reconnect_timer;
 static esp_netif_t *s_sta_netif;
 #ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
@@ -134,7 +142,7 @@ static bool s_init_attempted;
 static bool s_start_attempted;
 static esp_err_t s_init_result = ESP_ERR_INVALID_STATE;
 static esp_err_t s_start_result = ESP_ERR_INVALID_STATE;
-/* Only the default event-loop task changes the backoff. */
+/* Event-loop backoff; the worker resets it only with reconnect disabled. */
 static uint32_t s_retry_delay_ms = CONFIG_KLIVOX_WIFI_RETRY_INITIAL_MS;
 
 static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data);
@@ -181,7 +189,7 @@ static bool can_reconnect(void)
 {
     EventBits_t bits = xEventGroupGetBits(s_state);
     return (bits & (RECONNECT_BIT | STA_RUNNING_BIT)) == (RECONNECT_BIT | STA_RUNNING_BIT)
-           && !(bits & (PROVISIONING_BIT | ASSOCIATED_BIT));
+           && !(bits & (PROVISIONING_BIT | ASSOCIATED_BIT | RESET_BIT));
 }
 
 static void schedule_reconnect(void)
@@ -236,6 +244,32 @@ static void mark_disconnected(uint8_t reason, bool always_notify)
 
 static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *data)
 {
+    if (base == WIFI_MANAGER_INTERNAL_EVENT && id == RESET_REQUEST) {
+        xEventGroupSetBits(s_state, RESET_BIT);
+        xEventGroupClearBits(s_state, RECONNECT_BIT);
+        cancel_reconnect();
+        xTaskNotify(s_control_task, WORK_RESET, eSetBits);
+        return;
+    }
+    if (base == WIFI_MANAGER_INTERNAL_EVENT && id == RESET_DRAINED) {
+        /* FIFO barrier: all old END, STOP and IP events have been consumed. */
+        xEventGroupSetBits(s_state, DRAINED_BIT);
+        return;
+    }
+    if (base == WIFI_MANAGER_INTERNAL_EVENT && id == PROVISIONING_RELEASED) {
+        if (!(xEventGroupGetBits(s_state) & RESET_BIT)) {
+            xEventGroupClearBits(s_state, PROVISIONING_BIT);
+            if (xEventGroupGetBits(s_state) & PROVISIONED_BIT) {
+                xEventGroupSetBits(s_state, RECONNECT_BIT);
+                schedule_reconnect();
+            }
+        }
+        return;
+    }
+    if ((xEventGroupGetBits(s_state) & RESET_BIT) &&
+        (base == WIFI_PROV_EVENT || base == IP_EVENT)) {
+        return;
+    }
     if (base == WIFI_MANAGER_INTERNAL_EVENT && id == RECONNECT_DUE) {
         connect_station();
     } else if (base == WIFI_EVENT) {
@@ -323,13 +357,7 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
             break;
         }
         case WIFI_PROV_END:
-            release_provisioning_manager();
-            xEventGroupClearBits(s_state, PROVISIONING_BIT);
-            if (xEventGroupGetBits(s_state) & PROVISIONED_BIT) {
-                xEventGroupSetBits(s_state, RECONNECT_BIT);
-                schedule_reconnect();
-            }
-            ESP_LOGI(TAG, "Provisioning resources released");
+            xTaskNotify(s_control_task, WORK_END, eSetBits);
             break;
         default:
             break;
@@ -381,36 +409,6 @@ static esp_err_t custom_prov_data_handler(uint32_t session_id, const uint8_t *in
     *outlen = strlen(response) + 1; /* +1 for NULL terminating byte */
 
     return ESP_OK;
-}
-
-static void wifi_prov_print_qr(const char *name, const char *username, const char *pop, const char *transport)
-{
-    if (!name || !transport) {
-        ESP_LOGW(TAG, "Cannot generate QR code payload. Data missing.");
-        return;
-    }
-    char payload[150] = {0};
-    if (pop) {
-#if CONFIG_EXAMPLE_PROV_SECURITY_VERSION_1
-        snprintf(payload, sizeof(payload), "{\"ver\":\"%s\",\"name\":\"%s\"" \
-                    ",\"pop\":\"%s\",\"transport\":\"%s\"}",
-                    PROV_QR_VERSION, name, pop, transport);
-#elif CONFIG_EXAMPLE_PROV_SECURITY_VERSION_2
-        snprintf(payload, sizeof(payload), "{\"ver\":\"%s\",\"name\":\"%s\"" \
-                    ",\"username\":\"%s\",\"pop\":\"%s\",\"transport\":\"%s\"}",
-                    PROV_QR_VERSION, name, username, pop, transport);
-#endif
-    } else {
-        snprintf(payload, sizeof(payload), "{\"ver\":\"%s\",\"name\":\"%s\"" \
-                    ",\"transport\":\"%s\"}",
-                    PROV_QR_VERSION, name, transport);
-    }
-#ifdef CONFIG_EXAMPLE_PROV_SHOW_QR
-    ESP_LOGI(TAG, "Scan this QR code from the provisioning application for Provisioning.");
-    esp_qrcode_config_t cfg = ESP_QRCODE_CONFIG_DEFAULT();
-    esp_qrcode_generate(&cfg, payload);
-#endif /* CONFIG_APP_WIFI_PROV_SHOW_QR */
-    ESP_LOGI(TAG, "If QR code is not visible, copy paste the below URL in a browser.\n%s?data=%s", QRCODE_BASE_URL, payload);
 }
 
 #ifdef CONFIG_EXAMPLE_PROV_ENABLE_APP_CALLBACK
@@ -538,6 +536,7 @@ static esp_err_t start_provisioning(void)
      */
     ESP_RETURN_ON_ERROR(wifi_prov_mgr_endpoint_create("custom-data"), TAG, "Cannot create custom endpoint");
 
+    ESP_LOGI(TAG, "Starting BLE provisioning");
     /* Start provisioning service */
     ESP_RETURN_ON_ERROR(wifi_prov_mgr_start_provisioning(security, (const void *) sec_params, service_name, service_key), TAG, "Cannot start provisioning");
 
@@ -547,15 +546,51 @@ static esp_err_t start_provisioning(void)
      */
     ESP_RETURN_ON_ERROR(wifi_prov_mgr_endpoint_register("custom-data", custom_prov_data_handler, NULL), TAG, "Cannot register custom endpoint");
 
-    /* Print QR code for provisioning */
-#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
-    wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_BLE);
-#else /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
-    wifi_prov_print_qr(service_name, username, pop, PROV_TRANSPORT_SOFTAP);
-#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_BLE */
+    /* Security material is unchanged; provisioning secrets must not reach logs. */
+    (void)username;
+    (void)pop;
+    ESP_LOGI(TAG, "Waiting for Wi-Fi configuration (service %s)", service_name);
     return ESP_OK;
 }
 
+
+static esp_err_t init_provisioning_manager(void)
+{
+    wifi_prov_mgr_config_t config = {
+#ifdef CONFIG_EXAMPLE_RESET_PROV_MGR_ON_FAILURE
+        .wifi_prov_conn_cfg = {
+           .wifi_conn_attempts =  CONFIG_EXAMPLE_PROV_MGR_CONNECTION_CNT,
+        },
+#endif
+        /* What is the Provisioning Scheme that we want ?
+         * wifi_prov_scheme_softap or wifi_prov_scheme_ble */
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
+        .scheme = wifi_prov_scheme_ble,
+#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_BLE */
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
+        .scheme = wifi_prov_scheme_softap,
+#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
+#ifdef CONFIG_EXAMPLE_PROV_ENABLE_APP_CALLBACK
+        .app_event_handler = wifi_prov_event_handler,
+#endif /* EXAMPLE_PROV_ENABLE_APP_CALLBACK */
+
+        /* Keep BLE memory reusable. The transport still stops/deinitializes
+         * Bluetooth after END; irreversible esp_bt_mem_release is forbidden. */
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
+        .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE
+#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_BLE */
+#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
+        .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE
+#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
+    };
+
+
+    esp_err_t err = wifi_prov_mgr_init(config);
+    if (err == ESP_OK) {
+        xEventGroupSetBits(s_state, MANAGER_BIT);
+    }
+    return err;
+}
 
 static void cleanup_failed_init(void)
 {
@@ -663,48 +698,16 @@ esp_err_t wifi_manager_init(void)
                               event_handler, NULL, &s_handlers[s_registered_handlers].instance),
                           fail, TAG, "Cannot register connectivity event handler");
     }
-    wifi_prov_mgr_config_t config = {
-#ifdef CONFIG_EXAMPLE_RESET_PROV_MGR_ON_FAILURE
-        .wifi_prov_conn_cfg = {
-           .wifi_conn_attempts =  CONFIG_EXAMPLE_PROV_MGR_CONNECTION_CNT,
-        },
-#endif
-        /* What is the Provisioning Scheme that we want ?
-         * wifi_prov_scheme_softap or wifi_prov_scheme_ble */
-#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
-        .scheme = wifi_prov_scheme_ble,
-#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_BLE */
-#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
-        .scheme = wifi_prov_scheme_softap,
-#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
-#ifdef CONFIG_EXAMPLE_PROV_ENABLE_APP_CALLBACK
-        .app_event_handler = wifi_prov_event_handler,
-#endif /* EXAMPLE_PROV_ENABLE_APP_CALLBACK */
-
-        /* Any default scheme specific event handler that you would
-         * like to choose. Since our example application requires
-         * neither BT nor BLE, we can choose to release the associated
-         * memory once provisioning is complete, or not needed
-         * (in case when device is already provisioned). Choosing
-         * appropriate scheme specific event handler allows the manager
-         * to take care of this automatically. This can be set to
-         * WIFI_PROV_EVENT_HANDLER_NONE when using wifi_prov_scheme_softap*/
-#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_BLE
-        .scheme_event_handler = WIFI_PROV_SCHEME_BLE_EVENT_HANDLER_FREE_BTDM
-#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_BLE */
-#ifdef CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP
-        .scheme_event_handler = WIFI_PROV_EVENT_HANDLER_NONE
-#endif /* CONFIG_EXAMPLE_PROV_TRANSPORT_SOFTAP */
-    };
-
-
-    ESP_GOTO_ON_ERROR(wifi_prov_mgr_init(config), fail, TAG, "Cannot initialize provisioning manager");
-    xEventGroupSetBits(s_state, MANAGER_BIT);
+    ESP_GOTO_ON_ERROR(init_provisioning_manager(), fail, TAG, "Cannot initialize provisioning manager");
     bool provisioned = false;
     ESP_GOTO_ON_ERROR(wifi_prov_mgr_is_provisioned(&provisioned), fail, TAG,
                       "Cannot read saved Wi-Fi configuration");
     if (provisioned) {
         xEventGroupSetBits(s_state, PROVISIONED_BIT);
+    }
+    if (xTaskCreate(control_task, "wifi_control", 6144, NULL, 3, &s_control_task) != pdPASS) {
+        ret = ESP_ERR_NO_MEM;
+        goto fail;
     }
     s_init_result = ESP_OK;
     return ESP_OK;
@@ -715,15 +718,8 @@ fail:
     return ret;
 }
 
-esp_err_t wifi_manager_start(void)
+static esp_err_t start_connectivity(void)
 {
-    if (s_init_result != ESP_OK) {
-        return ESP_ERR_INVALID_STATE;
-    }
-    if (s_start_attempted) {
-        return s_start_result;
-    }
-    s_start_attempted = true;
     if (wifi_manager_is_provisioned()) {
         ESP_LOGI(TAG, "Saved credentials found; starting Wi-Fi STA without BLE provisioning");
         release_provisioning_manager();
@@ -747,6 +743,114 @@ esp_err_t wifi_manager_start(void)
         }
     }
     return s_start_result;
+}
+
+/* Only this worker starts/deinitializes provisioning after init. It may block
+ * in SDK teardown without blocking the default event loop needed by the SDK. */
+static esp_err_t reset_credentials(void)
+{
+    release_provisioning_manager();
+    esp_err_t err = esp_wifi_stop();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_STARTED) {
+        return err;
+    }
+    /* deinit can emit END; stop can emit STOP. Drain both before a new manager. */
+    xEventGroupClearBits(s_state, DRAINED_BIT);
+    ESP_RETURN_ON_ERROR(esp_event_post(WIFI_MANAGER_INTERNAL_EVENT, RESET_DRAINED,
+                                      NULL, 0, portMAX_DELAY), TAG, "Cannot drain old events");
+    xEventGroupWaitBits(s_state, DRAINED_BIT, pdTRUE, pdTRUE, portMAX_DELAY);
+    mark_disconnected(0, false);
+    xEventGroupClearBits(s_state, STA_RUNNING_BIT | ASSOCIATED_BIT | PROVISIONING_BIT);
+
+    /* reset_provisioning() in IDF 5.5.6 calls esp_wifi_restore(), which resets
+     * additional Wi-Fi settings. Persist only an empty STA config instead.
+     * The provisioning SDK can switch storage to RAM, so select FLASH explicitly. */
+    ESP_RETURN_ON_ERROR(esp_wifi_set_storage(WIFI_STORAGE_FLASH), TAG, "Cannot select persistent storage");
+    wifi_config_t empty = {0};
+    ESP_RETURN_ON_ERROR(esp_wifi_set_config(WIFI_IF_STA, &empty), TAG, "Cannot clear Wi-Fi credentials");
+    xEventGroupClearBits(s_state, PROVISIONED_BIT);
+    ESP_LOGI(TAG, "Wi-Fi credentials cleared");
+    s_retry_delay_ms = CONFIG_KLIVOX_WIFI_RETRY_INITIAL_MS;
+    ESP_RETURN_ON_ERROR(init_provisioning_manager(), TAG, "Cannot recreate provisioning manager");
+    xEventGroupSetBits(s_state, PROVISIONING_BIT);
+    xEventGroupClearBits(s_state, RESET_BIT);
+    err = start_provisioning();
+    if (err != ESP_OK) {
+        /* Keep stale END from SDK error cleanup away from the next session. */
+        xEventGroupSetBits(s_state, RESET_BIT);
+        release_provisioning_manager();
+        xEventGroupClearBits(s_state, DRAINED_BIT);
+        esp_event_post(WIFI_MANAGER_INTERNAL_EVENT, RESET_DRAINED, NULL, 0, portMAX_DELAY);
+        xEventGroupWaitBits(s_state, DRAINED_BIT, pdTRUE, pdTRUE, portMAX_DELAY);
+        xEventGroupClearBits(s_state, PROVISIONING_BIT);
+    }
+    return err;
+}
+
+static void control_task(void *arg)
+{
+    (void)arg;
+    for (;;) {
+        uint32_t work;
+        xTaskNotifyWait(0, UINT32_MAX, &work, portMAX_DELAY);
+        if (work & WORK_START) {
+            s_start_result = start_connectivity();
+            xEventGroupSetBits(s_state, START_DONE_BIT);
+        }
+        if (work & WORK_RESET) {
+            esp_err_t err = reset_credentials();
+            xEventGroupClearBits(s_state, RESET_BIT);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Wi-Fi reset failed: %s; SETUP can be retried", esp_err_to_name(err));
+                wifi_manager_provisioning_failed_event_t failure = {
+                    .reason = WIFI_MANAGER_PROV_INTERNAL_ERROR, .error = err,
+                };
+                publish(WIFI_MANAGER_EVENT_PROVISIONING_FAILED, &failure, sizeof(failure));
+            }
+            portENTER_CRITICAL(&s_request_lock);
+            s_reset_pending = false;
+            portEXIT_CRITICAL(&s_request_lock);
+        } else if (work & WORK_END) {
+            release_provisioning_manager();
+            ESP_LOGI(TAG, "Provisioning resources released (BLE memory reusable)");
+            esp_event_post(WIFI_MANAGER_INTERNAL_EVENT, PROVISIONING_RELEASED, NULL, 0, portMAX_DELAY);
+        }
+    }
+}
+
+esp_err_t wifi_manager_start(void)
+{
+    if (s_init_result != ESP_OK) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (!s_start_attempted) {
+        s_start_attempted = true;
+        xTaskNotify(s_control_task, WORK_START, eSetBits);
+    }
+    xEventGroupWaitBits(s_state, START_DONE_BIT, pdFALSE, pdTRUE, portMAX_DELAY);
+    return s_start_result;
+}
+
+esp_err_t wifi_manager_reset_credentials(void)
+{
+    if (s_init_result != ESP_OK || !s_start_attempted ||
+        !(xEventGroupGetBits(s_state) & START_DONE_BIT)) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    portENTER_CRITICAL(&s_request_lock);
+    bool busy = s_reset_pending;
+    s_reset_pending = true;
+    portEXIT_CRITICAL(&s_request_lock);
+    if (busy) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    esp_err_t err = esp_event_post(WIFI_MANAGER_INTERNAL_EVENT, RESET_REQUEST, NULL, 0, 0);
+    if (err != ESP_OK) {
+        portENTER_CRITICAL(&s_request_lock);
+        s_reset_pending = false;
+        portEXIT_CRITICAL(&s_request_lock);
+    }
+    return err;
 }
 
 bool wifi_manager_is_connected(void)

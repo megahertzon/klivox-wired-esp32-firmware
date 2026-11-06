@@ -114,16 +114,17 @@ consumidores deben tolerarlo.
 
 1. `init` inicializa NVS y el controlador, y consulta el estado mediante
    `wifi_prov_mgr_is_provisioned()`; no borra NVS ni modifica las credenciales.
-2. Con credenciales guardadas, `start` libera el manager y sus recursos BTDM e
+2. Con credenciales guardadas, `start` libera el manager e
    inicia Station sin anunciar un servicio BLE de aprovisionamiento.
 3. Sin credenciales, utiliza el flujo original: nombre `PROV_XXXXXX`, UUID BLE,
-   endpoint `custom-data`, Security 2, salt/verifier y QR del ejemplo.
+   endpoint `custom-data`, Security 2 y salt/verifier del ejemplo.
 4. El manager oficial controla los intentos de conexión durante la validación
    inicial. Se mantienen cinco intentos y la opción existente que permite al
    teléfono enviar credenciales corregidas después de un fallo. Ese reinicio
    descarta exclusivamente las credenciales nuevas rechazadas, no las de una
    instalación que ya fue validada. No se ejecuta ante desconexiones normales.
-5. Después de `WIFI_PROV_END`, se desinicializa el manager y se libera BTDM.
+5. Después de `WIFI_PROV_END`, se desinicializan el manager y el transporte BLE.
+   La memoria Bluetooth queda reutilizable para SETUP; no se libera irreversiblemente.
    El temporizador del módulo toma el control de las reconexiones: 1, 2, 4, 8,
    16, 32 y 60 segundos, manteniendo 60 como máximo. Los tiempos son esperas
    entre intentos, adicionales al tiempo que tarde cada intento del controlador.
@@ -143,18 +144,20 @@ adquiridos durante una inicialización fallida se liberan; los recursos globales
 compartidos NVS/netif no se desinicializan.
 
 `init` y `start` deben llamarse desde una sola tarea de arranque. Las llamadas
-repetidas devuelven su resultado original. Un error de arranque es terminal para
-esa ejecución, porque la limpieza del SDK puede haber liberado irreversiblemente
-memoria BLE. No se ofrece todavía una API de stop/reset/reaprovisionamiento;
-esa función futura requiere diseñar explícitamente el ciclo de vida Bluetooth.
+repetidas devuelven su resultado original. El trabajo del SDK se serializa en una
+sola tarea `wifi_control`; `start` espera su resultado, sin esperar credenciales ni IP.
+La API `wifi_manager_reset_credentials()` permite recuperar el aprovisionamiento
+incluso si falló el arranque del servicio, después de una inicialización correcta.
 
 ## Seguridad de desarrollo y producción
 
 La configuración activa sigue siendo BLE + Security 2 + Development. Se mantienen
 sin cambios el usuario `wifiprov`, PoP `abcd1234`, salt, verifier y UUID originales.
 No se registra la contraseña de la red Wi-Fi ni el contenido arbitrario recibido
-por `custom-data`. El QR y su URL continúan mostrando el PoP de desarrollo como
-antes; ese PoP es distinto de la contraseña del router.
+por `custom-data`. El QR y su URL ya no se imprimen porque contienen el secreto
+de aprovisionamiento, independientemente de `EXAMPLE_PROV_SHOW_QR`. La app puede
+usar el QR de desarrollo previamente entregado o la entrada manual con los mismos
+parámetros Security 2; no se cambian las credenciales de seguridad.
 
 La rama `EXAMPLE_PROV_SEC2_PROD_MODE` continúa separada y sin implementar:
 devuelve `ESP_ERR_NOT_SUPPORTED` hasta incorporar material SRP único por dispositivo
@@ -190,7 +193,7 @@ previa. Una vez autorizada la carga y con el monitor serie disponible:
 | Corte de energía | Desconectar alimentación y volver a conectar | Reconexión a la misma red sin usar la app y sin borrar credenciales |
 | Router ausente | Apagar temporalmente el AP y encenderlo después | Esperas progresivas en logs, reconexión al volver el AP, sin reiniciar ni abrir BLE |
 | Reinicio sin router | Arrancar con el AP apagado; restaurarlo después | Mantiene estado provisionado y reintenta hasta recuperar IP |
-| Aprovisionamiento inicial | Usar una unidad sin credenciales; conectar con ESP BLE Provisioning y el QR existente | Sesión segura, recepción de credenciales sin mostrarlas, éxito, IP y liberación BTDM tras finalizar |
+| Aprovisionamiento inicial | Usar una unidad sin credenciales; conectar con ESP BLE Provisioning y el QR existente o entrada manual | Sesión segura, recepción de credenciales sin mostrarlas, éxito, IP y cierre del transporte BLE tras finalizar |
 | Credenciales iniciales incorrectas | En esa unidad, enviar primero una contraseña incorrecta; luego corregirla desde la app | Evento de fallo inicial y posibilidad de corregir sin borrar toda la memoria |
 | Desconexión durante cierre BLE | Tras el primer éxito, apagar el AP antes del cierre automático; esperar el cierre y restaurar el AP | Conserva credenciales, libera aprovisionamiento y recupera IP; comprobar también tras cortar alimentación |
 | Estado público | Consumir eventos desde otro módulo y consultar ambas funciones | Connected solo con IP; disconnected quita ese estado pero conserva provisioned |
@@ -447,3 +450,116 @@ particiones; la configuración efectiva solo añade los cinco parámetros de las
 tres entradas respecto de la versión anterior sin contactos/pulsadores.
 Log: `build/digital_inputs_build.log`. No se realizó flash ni borrado;
 quedan pendientes las pruebas físicas con GPIO32, GPIO26 y GPIO19.
+
+
+## Botón oculto SETUP: restablecimiento Wi-Fi
+
+Cablear un pulsador **normalmente abierto entre GPIO23 y GND**. Usa pull-up
+interno y nivel activo LOW; no requiere resistencia externa. GPIO23 está libre
+en la configuración actual (temperatura 18, IR 27, buzzer 25, contactos 32/26,
+POWER 19). Si se cambia ese mapa, el módulo rechaza conflictos antes de tocar el pin.
+
+`components/setup_button_manager/` configura el GPIO y usa interrupciones para
+despertar una tarea de prioridad 1 en CPU1, compartiendo el servicio GPIO con
+IR y entradas. La ISR solo captura nivel/tiempo y notifica; la tarea duerme hasta
+un flanco o vencimiento del antirrebote/umbral. No hay polling permanente.
+Las constantes `KLIVOX_SETUP_GPIO`, `KLIVOX_SETUP_HOLD_MS` (5000) y
+`KLIVOX_SETUP_DEBOUNCE_MS` (50) están en la cabecera. La medición empieza en el
+último flanco LOW y exige un nivel continuo: cualquier rebote reinicia ese plazo.
+Se dispara una vez por pulsación y solo se rearma tras 50 ms de liberación estable.
+También funciona si se arranca con SETUP presionado.
+
+`main.c` llama a `app_setup_init()`. La composición está en `main/app_setup.c`:
+valida el mapa de la placa y registra un callback que programa el sonido y solicita
+el reset Wi-Fi. El componente `setup_button_manager` recibe GPIO, tiempos y
+callback en `setup_button_manager_config_t`; no depende de Wi-Fi, NVS ni buzzer.
+Su API es `setup_button_manager_init(&config)`, y el callback debe regresar rápido.
+
+Al confirmar los 5 segundos se programan **dos pitidos de 100 ms, con una pausa
+de 100 ms**, en el buzzer existente de GPIO25. `app_feedback` da prioridad a SETUP:
+si hay un pitido IR en curso, espera su final mediante reintentos con temporizador.
+`buzzer_beep_pattern(2, 100, 100)` reserva también la pausa entre ambos tonos para
+que no se mezclen otros pitidos IR. No hay `vTaskDelay` ni esperas del sonido en el
+callback SETUP; el restablecimiento Wi-Fi/BLE avanza en paralelo. El aviso confirma
+la pulsación prolongada, no el éxito final del aprovisionamiento. Si falla el buzzer,
+el reset sigue funcionando y se registra el error.
+
+`wifi_manager_reset_credentials()` es asíncrona: `ESP_OK` significa solicitud
+aceptada. Admite llamadas desde tareas y callbacks de eventos, nunca desde ISR.
+Rechaza solicitudes simultáneas con `ESP_ERR_INVALID_STATE` y devuelve errores
+de cola. Observar `PROVISIONING_STARTED` o `PROVISIONING_FAILED` para el resultado;
+las consultas de estado permiten reconciliar notificaciones públicas perdidas.
+
+La solicitud desactiva el backoff, cierra el manager anterior en `wifi_control`,
+detiene Station y drena los eventos antiguos antes de abrir otro servicio. Se
+selecciona `WIFI_STORAGE_FLASH` y se guarda una configuración Station vacía con
+`esp_wifi_set_config(WIFI_IF_STA, ...)`. Solo entonces se marca sin provisionar.
+No se usa `wifi_prov_mgr_reset_provisioning()`: en ESP-IDF 5.5.6 llama a
+`esp_wifi_restore()` y restablece más opciones Wi-Fi de las necesarias. No se
+borran namespaces del producto ni la partición NVS. No se duplican netif, event
+loop, controlador Wi-Fi ni handlers de aplicación. El nuevo manager conserva
+nombre BLE, UUID, endpoint y Security 2; el SDK persiste las nuevas credenciales.
+
+Para permitir ciclos repetidos se usa `WIFI_PROV_EVENT_HANDLER_NONE` en lugar
+de `FREE_BTDM`. El servicio y la pila BLE se detienen/desinicializan al terminar;
+se conserva la memoria que debe seguir disponible para reiniciarlos. Esto cambia
+el uso de memoria respecto del firmware que liberaba BTDM permanentemente y
+requiere comprobar el mínimo heap libre en ciclos reales junto con IR y sensores.
+
+Un corte **antes de confirmar la escritura vacía** puede conservar la red anterior;
+un corte **después** arranca sin SSID y vuelve a BLE. Si falla el reinicio de BLE,
+se informa `PROVISIONING_FAILED` y se puede liberar/presionar SETUP nuevamente.
+No se reinicia automáticamente el ESP32.
+
+### Prueba física de aceptación (pendiente)
+
+Después de cargar este firmware mediante un procedimiento autorizado:
+
+1. Arrancar con la red A guardada y comprobar IP sin anuncio BLE.
+2. Mantener SETUP al menos 5 segundos. Ver `KLIVOX_SETUP: SETUP button pressed`,
+   `Long press detected (5000 ms)`, `Requesting Wi-Fi credentials reset`, y luego
+   `KLIVOX_WIFI: Wi-Fi credentials cleared`, `Starting BLE provisioning` y
+   `Waiting for Wi-Fi configuration`. La IP anterior debe dejar de estar disponible.
+3. Confirmar dos pitidos cortos al alcanzar el umbral; mantener hasta 15 segundos:
+   una sola pareja y una sola solicitud. Liberar y volver a mantener 5 segundos:
+   una nueva pareja. Una pulsación corta no debe sonar ni borrar nada.
+   Repetir mientras llegan tramas IR: los avisos IR no deben colarse entre los dos
+   tonos SETUP. Con buzzer ausente o averiado, verificar que Wi-Fi/BLE siguen.
+4. Desde ESP BLE Provisioning, conectar al mismo nombre `PROV_XXXXXX`, usar los
+   parámetros Security 2 Development existentes y configurar la red B.
+   Comprobar éxito, nueva IP y cierre del servicio BLE sin reinicio.
+5. Cortar alimentación y volver a encender: debe reconectar a B, nunca a A,
+   sin anunciar BLE. Apagar/restaurar el AP y comprobar el backoff habitual.
+6. Repetir el ciclo A/B al menos 20 veces; observar mínimo heap libre, ausencia
+   de watchdog, anuncios duplicados y errores de inicialización Bluetooth.
+   Verificar que continúan capturas IR, temperatura, contactos y POWER.
+
+| Caso adicional | Resultado esperado |
+| --- | --- |
+| Pulsación menor de 5 s o rebotes breves | Sin borrado ni cambio de servicio |
+| Soltar cerca del umbral antes de 5 s | Sin evento; el plazo se reinicia al volver a pulsar |
+| Pulsar mientras falta el AP / durante backoff | Se cancela la reconexión y vuelve BLE |
+| Pulsar durante BLE, con/sin teléfono conectado o validando credenciales | Se cierra la sesión anterior y se abre una sola sesión nueva |
+| Pulsar tras un fallo de contraseña nueva | Es posible volver a configurar otra red |
+| Cortar energía tras `Wi-Fi credentials cleared` antes de enviar otra red | Al volver, BLE activo; no recupera la red anterior |
+| Configuración del producto en otro namespace NVS | Valores iguales antes y después de varios ciclos SETUP |
+| Logs completos de sesiones | Sin contraseña Wi-Fi, PoP, verifier ni URL/QR con secretos |
+
+Compilar no confirma estas pruebas de radio, rebotes físicos ni persistencia ante
+cortes; requieren el ESP32 y el celular. No se ejecuta flash ni borrado automático.
+
+Validación de SETUP, 6 de noviembre de 2026: `idf.py build` terminó con código 0
+con ESP-IDF 5.5.6. Binario de 1.476.720 bytes; 59.280 bytes (4 %) libres en la
+partición de aplicación. Registro: `build/setup_button_build.log`. Se verificaron
+sin cambios salt, verifier, credenciales Security 2 y UUID, además de `sdkconfig`
+y las particiones. No se ejecutó flash ni borrado. Pruebas físicas pendientes.
+
+La implementación SETUP se trasladó a `components/setup_button_manager/`.
+La coordinación queda en `main/app_setup.c` y el sonido en `app_feedback` +
+`components/buzzer`; `main.c` solo inicia los módulos. La validación de sonido
+físico y coexistencia con IR/BLE está pendiente; no se realizó flash ni borrado.
+
+Compilación del traslado a componente y los dos pitidos: `idf.py build` con
+ESP-IDF 5.5.6 terminó con código 0. Registro: `build/setup_button_build.log`.
+Se mantiene el aviso de partición casi llena (4 % libre). La compilación no
+comprueba el sonido físico, los tiempos bajo carga ni el funcionamiento BLE.
