@@ -1,0 +1,94 @@
+#include "buzzer.h"
+
+#include "driver/gpio.h"
+#include "esp_log.h"
+#include "esp_timer.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
+static const char *TAG = "buzzer";
+static int s_gpio = -1;
+static esp_timer_handle_t s_off_timer;
+static SemaphoreHandle_t s_idle;
+
+static void buzzer_off(void *arg)
+{
+    (void)arg;
+    const esp_err_t err = gpio_set_level(s_gpio, 0);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Cannot switch buzzer off: %s", esp_err_to_name(err));
+    }
+    xSemaphoreGive(s_idle);
+}
+
+esp_err_t buzzer_init(const buzzer_config_t *config)
+{
+    if (!config || !GPIO_IS_VALID_OUTPUT_GPIO(config->gpio_num)) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (s_off_timer) {
+        return config->gpio_num == s_gpio ? ESP_OK : ESP_ERR_INVALID_STATE;
+    }
+    const int pin = config->gpio_num;
+    esp_err_t err = gpio_set_level(pin, 0);
+    if (err != ESP_OK) {
+        return err;
+    }
+    const gpio_config_t pin_config = {
+        .pin_bit_mask = 1ULL << pin,
+        .mode = GPIO_MODE_OUTPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    err = gpio_config(&pin_config);
+    if (err == ESP_OK) {
+        err = gpio_set_level(pin, 0);
+    }
+    if (err != ESP_OK) {
+        return err;
+    }
+    SemaphoreHandle_t idle = xSemaphoreCreateBinary();
+    if (!idle) {
+        return ESP_ERR_NO_MEM;
+    }
+    const esp_timer_create_args_t timer_config = {
+        .callback = buzzer_off,
+        .name = "buzzer_off",
+    };
+    esp_timer_handle_t timer = NULL;
+    err = esp_timer_create(&timer_config, &timer);
+    if (err != ESP_OK) {
+        vSemaphoreDelete(idle);
+        return err;
+    }
+    s_gpio = pin;
+    s_idle = idle;
+    s_off_timer = timer;
+    xSemaphoreGive(s_idle);
+    ESP_LOGI(TAG, "Active buzzer ready on GPIO%d; idle LOW", s_gpio);
+    return ESP_OK;
+}
+
+esp_err_t buzzer_beep(uint32_t duration_ms)
+{
+    if (duration_ms < 50 || duration_ms > 1000) {
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!s_off_timer) {
+        return ESP_ERR_INVALID_STATE;
+    }
+    if (xSemaphoreTake(s_idle, 0) != pdTRUE) {
+        return ESP_ERR_TIMEOUT;
+    }
+    esp_err_t err = gpio_set_level(s_gpio, 1);
+    if (err == ESP_OK) {
+        err = esp_timer_start_once(s_off_timer, duration_ms * 1000ULL);
+    }
+    if (err != ESP_OK) {
+        // Never leave the transistor ON if arming the off timer failed.
+        (void)gpio_set_level(s_gpio, 0);
+        xSemaphoreGive(s_idle);
+    }
+    return err;
+}

@@ -1,4 +1,5 @@
 #include "esp_log.h"
+#include "app_feedback.h"
 #include "ir_receiver.h"
 #include "sdkconfig.h"
 #include "temperature_manager.h"
@@ -6,7 +7,12 @@
 
 void app_main(void)
 {
+    /* Establish the inactive buzzer level before radios and other drivers. */
+    const esp_err_t feedback_err = app_feedback_init();
     ESP_LOGI("KLIVOX", "Starting Klivox Wired");
+    if (feedback_err != ESP_OK) {
+        ESP_LOGE("KLIVOX", "Buzzer initialization failed: %s", esp_err_to_name(feedback_err));
+    }
 
     /* Allocate the IR library's capture buffers before the radios use heap.
      * Capture itself starts below, after the other modules initialize. */
@@ -14,6 +20,7 @@ void app_main(void)
         .gpio_num = CONFIG_KLIVOX_IR_RX_GPIO,
         .capture_buffer_entries = CONFIG_KLIVOX_IR_RX_BUFFER_SIZE,
         .frame_timeout_ms = CONFIG_KLIVOX_IR_RX_TIMEOUT_MS,
+        .on_frame = app_feedback_on_ir_frame,
 #ifdef CONFIG_KLIVOX_IR_DUMP_RAW
         .dump_raw = true,
 #endif

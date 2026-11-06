@@ -1,0 +1,21 @@
+menu "Klivox active buzzer"
+
+    config KLIVOX_BUZZER_GPIO
+        int "NPN transistor base GPIO (through series resistor)"
+        range 0 48
+        default 25
+        help
+            Active-high output for an externally powered active buzzer through
+            an NPN transistor. Default GPIO25; GPIO18 and GPIO27 are used by
+            DS18B20 and IR in Klivox Wired. A base-to-ground resistor keeps the
+            transistor off during reset, before the application starts.
+
+    config KLIVOX_BUZZER_PULSE_MS
+        int "IR capture beep duration (ms)"
+        range 50 1000
+        default 80
+        help
+            Non-blocking one-shot pulse. Captures received during an active
+            pulse are coalesced: they do not queue or extend the sound.
+
+endmenu

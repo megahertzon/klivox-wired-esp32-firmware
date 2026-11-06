@@ -11,6 +11,8 @@
 ## Arquitectura
 
 - Mantén `main/main.c` enfocado en la inicialización general.
+- Mantén la composición entre componentes en la capa de aplicación; evita que
+  los drivers de sensores dependan directamente de actuadores u otros consumidores.
 - Encapsula la lógica de cada módulo, sus eventos y sus recursos. La gestión
   Wi-Fi y del aprovisionamiento BLE pertenece a `components/wifi_manager`.
 - Otros módulos deben consumir la API pública y `WIFI_MANAGER_EVENT`; evita
