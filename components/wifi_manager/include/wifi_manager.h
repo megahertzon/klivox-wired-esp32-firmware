@@ -49,11 +49,17 @@ esp_err_t wifi_manager_init(void);
 
 /** Start saved Wi-Fi or provisioning, without waiting for credentials or IP.
  * Call after init, from the same startup task (not an event callback).
- * Successful repeated calls are harmless. A failed start is terminal for this
- * boot: the BLE memory may already have been released by SDK cleanup.
- * No stop/reprovision API: BTDM memory is released after provisioning.
+ * Repeated calls return the first startup result. SDK work runs on a worker.
  */
 esp_err_t wifi_manager_start(void);
+
+/** Queue an explicit Wi-Fi-only reset and restart BLE provisioning without reboot.
+ * Task-context API, safe from event callbacks. ESP_OK means accepted, not completed.
+ * A concurrent request returns ESP_ERR_INVALID_STATE; queue congestion is returned.
+ * Observe PROVISIONING_STARTED / PROVISIONING_FAILED for the asynchronous outcome.
+ * May retry after a failure. Does not erase other NVS namespaces or Wi-Fi settings.
+ */
+esp_err_t wifi_manager_reset_credentials(void);
 
 /** Thread-safe snapshots; false before initialization. Connected means IPv4 ready. */
 bool wifi_manager_is_connected(void);

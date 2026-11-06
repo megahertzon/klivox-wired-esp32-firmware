@@ -1,4 +1,5 @@
 #include "buzzer.h"
+#include <stdbool.h>
 
 #include "driver/gpio.h"
 #include "esp_log.h"
@@ -10,15 +11,40 @@ static const char *TAG = "buzzer";
 static int s_gpio = -1;
 static esp_timer_handle_t s_off_timer;
 static SemaphoreHandle_t s_idle;
+static uint32_t s_duration_ms;
+static uint32_t s_gap_ms;
+static unsigned s_remaining;
+static bool s_sounding;
+
+static void end_pattern(void)
+{
+    (void)gpio_set_level(s_gpio, 0);
+    xSemaphoreGive(s_idle);
+}
 
 static void buzzer_off(void *arg)
 {
     (void)arg;
-    const esp_err_t err = gpio_set_level(s_gpio, 0);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "Cannot switch buzzer off: %s", esp_err_to_name(err));
+    esp_err_t err;
+    if (s_sounding) {
+        err = gpio_set_level(s_gpio, 0);
+        s_sounding = false;
+        if (--s_remaining == 0 || err != ESP_OK) {
+            end_pattern();
+            return;
+        }
+        err = esp_timer_start_once(s_off_timer, s_gap_ms * 1000ULL);
+    } else {
+        err = gpio_set_level(s_gpio, 1);
+        s_sounding = true;
+        if (err == ESP_OK) {
+            err = esp_timer_start_once(s_off_timer, s_duration_ms * 1000ULL);
+        }
     }
-    xSemaphoreGive(s_idle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Cannot advance buzzer pattern: %s", esp_err_to_name(err));
+        end_pattern();
+    }
 }
 
 esp_err_t buzzer_init(const buzzer_config_t *config)
@@ -72,7 +98,13 @@ esp_err_t buzzer_init(const buzzer_config_t *config)
 
 esp_err_t buzzer_beep(uint32_t duration_ms)
 {
-    if (duration_ms < 50 || duration_ms > 1000) {
+    return buzzer_beep_pattern(1, duration_ms, 0);
+}
+
+esp_err_t buzzer_beep_pattern(unsigned count, uint32_t duration_ms, uint32_t gap_ms)
+{
+    if (count < 1 || count > 8 || duration_ms < 50 || duration_ms > 1000 ||
+        (count > 1 && (gap_ms < 50 || gap_ms > 1000))) {
         return ESP_ERR_INVALID_ARG;
     }
     if (!s_off_timer) {
@@ -81,6 +113,10 @@ esp_err_t buzzer_beep(uint32_t duration_ms)
     if (xSemaphoreTake(s_idle, 0) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
+    s_remaining = count;
+    s_duration_ms = duration_ms;
+    s_gap_ms = gap_ms;
+    s_sounding = true;
     esp_err_t err = gpio_set_level(s_gpio, 1);
     if (err == ESP_OK) {
         err = esp_timer_start_once(s_off_timer, duration_ms * 1000ULL);
