@@ -1,0 +1,34 @@
+menu "Klivox IR receiver"
+
+    config KLIVOX_IR_RX_GPIO
+        int "VS1838B OUT GPIO"
+        range 0 48
+        default 27
+        help
+            Choose an available input GPIO. Klivox Wired uses GPIO27 by default;
+            GPIO18 is reserved for the DS18B20. Power the receiver from 3.3 V.
+
+    config KLIVOX_IR_RX_BUFFER_SIZE
+        int "Capture buffer entries"
+        range 1024 16384
+        default 4096
+        help
+            Two buffers are allocated, using about four bytes per entry in
+            total. Larger values need more heap, especially with Wi-Fi/BLE.
+
+    config KLIVOX_IR_RX_TIMEOUT_MS
+        int "End-of-message silence (ms)"
+        range 15 130
+        default 50
+        help
+            AC remotes can send multiple sections. Increase this if a single
+            command is split into incomplete frames, as in on_off_light.
+
+    config KLIVOX_IR_DUMP_RAW
+        bool "Log raw timings for each received frame"
+        default y
+        help
+            Prints durations in microseconds, starting with a mark. Long
+            serial dumps can lose subsequent frames; press one button at a time.
+
+endmenu

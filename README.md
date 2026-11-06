@@ -1,8 +1,10 @@
-# Klivox Wired — conectividad y temperatura
+# Klivox Wired — conectividad, temperatura y recepción IR
 
 Firmware C para ESP32 clásico, ESP-IDF 5.5.6 y FreeRTOS. La refactorización
 conserva el Provisioning Manager oficial y no incorpora un cliente MQTT.
 Incluye adquisición periódica de temperatura con un DS18B20 externo.
+También captura y decodifica controles IR mediante un VS1838B, como el proyecto
+`on_off_light`, con detección general y salida RAW para señales desconocidas.
 
 ## Archivos
 
@@ -12,7 +14,7 @@ Incluye adquisición periódica de temperatura con un DS18B20 externo.
   eventos y temporizador de reconexión.
 - `main/wifi_manager.h`: API, eventos y tipos públicos de los mensajes.
 - `main/CMakeLists.txt`: compila exclusivamente `main.c` y `wifi_manager.c`;
-  declara las dependencias de ESP-IDF, QR y el componente `temperature_manager`.
+  declara las dependencias de ESP-IDF, QR, `temperature_manager` e `ir_receiver`.
 - `main/Kconfig.projbuild`: conserva BLE y Security 2; agrega los tiempos de
   reconexión. Elimina los modos del ejemplo que borraban credenciales en cada
   arranque o repetían el aprovisionamiento periódicamente.
@@ -23,6 +25,8 @@ Incluye adquisición periódica de temperatura con un DS18B20 externo.
 - `components/temperature_manager/`: componente reutilizable que encapsula el
   bus 1-Wire, descubrimiento DS18B20, lectura periódica, log y consulta del último
   resultado. Incluye su propia configuración y dependencias.
+- `components/ir_receiver/`: receptor IR con API C, implementación C++, callback
+  y consulta de la última captura. Usa `jorgecis/irremoteidf` 1.0.2.
 - `sdkconfig.defaults`: parámetros base del ESP32 y ajuste de IRAM para RMT;
   los valores de un `sdkconfig` existente tienen prioridad sobre estos defaults.
 
@@ -225,21 +229,23 @@ I (...) temperature_manager: DS18B20: 26.56 C
 
 ### Configuración de memoria en el ESP32 clásico
 
-La combinación de Wi-Fi, BLE y el nuevo controlador RMT excedió inicialmente la
-IRAM disponible en 724 bytes. Se desactivó únicamente
-`CONFIG_RMT_TX_ISR_HANDLER_IN_IRAM` para colocar el ISR TX de RMT en flash;
-el ISR RX y los encoders permanecen en IRAM. Se mantienen desactivados los modos
-RMT TX/RX cache-safe de la configuración previa. No se cambió la configuración
-Wi-Fi/BLE, la tabla de particiones ni el SDK.
-El mapa enlazado deja **556 bytes libres en la región IRAM** del ESP32 clásico;
-ese margen es distinto del espacio libre en flash y debe revisarse al ampliar
-este firmware. No se ha validado todavía la integración en otro SoC.
+Para que Wi-Fi, BLE, DS18B20 y recepción IR quepan en la IRAM del ESP32 clásico,
+se colocan en flash el ISR TX y los encoders de RMT:
+`CONFIG_RMT_TX_ISR_HANDLER_IN_IRAM=n` y `CONFIG_RMT_ENCODER_FUNC_IN_IRAM=n`.
+El ISR RX permanece en IRAM. Se mantienen desactivados los modos RMT TX/RX
+cache-safe de la configuración previa. No se cambió la configuración Wi-Fi/BLE,
+la tabla de particiones ni el SDK. El margen de IRAM es distinto del espacio
+libre en flash y debe revisarse al ampliar el firmware. No se ha validado
+todavía la integración de estos componentes en otro SoC.
+La compilación con IR deja **396 bytes libres en IRAM**; la partición de
+aplicación conserva **56.240 bytes libres (aproximadamente 4 %)**.
 
 Este ajuste se aplica al `sdkconfig` local y se incluye en `sdkconfig.defaults`
 para nuevas configuraciones. Si se conserva un `sdkconfig` anterior, desactivar
 **Component config → ESP-Driver:RMT Configurations → Place RMT TX ISR handler
-in IRAM to reduce latency** desde `idf.py menuconfig`, porque los defaults no
-sobrescriben valores ya existentes. El ajuste pertenece al proyecto Wired;
+in IRAM to reduce latency** y **Place RMT encoder function in IRAM** desde
+`idf.py menuconfig`, porque los defaults no sobrescriben valores ya existentes.
+El ajuste pertenece al proyecto Wired;
 revisar los recursos de la placa Zigbee antes de aplicar su configuración.
 
 Como los modos cache-safe están desactivados, las interrupciones RMT pueden
@@ -319,3 +325,28 @@ ESP-IDF 5.5.6, sin advertencias del compilador ni del enlazador. El binario mide
 1.340.224 bytes y deja un 13 % libre en la partición de aplicación. Se comprobó
 que la tabla binaria de particiones coincide con la anterior. No se ejecutó
 flash ni borrado del dispositivo; las pruebas físicas anteriores están pendientes.
+
+## Recepción IR con VS1838B
+
+Conectar **OUT a GPIO27**, **VCC a 3V3** y **GND a GND común**, confirmando el
+pinout del receptor/módulo. GPIO18 sigue reservado para el DS18B20. En
+`menuconfig → Klivox IR receiver` se ajustan el GPIO, buffer de captura (4096),
+silencio de fin de mensaje (50 ms) y log RAW (activado).
+
+La implementación usa la misma biblioteca y el mismo flujo de decodificación
+de `on_off_light`; se conserva la detección general sin seleccionar una marca.
+No se añade transmisión IR ni automatización. Los radios y ambos sensores
+continúan en tareas separadas. Los buffers IR se reservan antes de Wi-Fi/BLE;
+un conflicto entre los GPIO de IR y DS18B20 se rechaza sin reconfigurar el pin.
+
+La API C permite iniciar el módulo, consultar la última captura y recibir un
+callback con metadatos y vista temporal de RAW. Detalles de memoria, límites de
+la biblioteca, portabilidad y pruebas en
+[components/ir_receiver/README.md](components/ir_receiver/README.md).
+
+Validación de IR: `idf.py build` finalizó con código 0 en ESP-IDF 5.5.6. El
+binario ocupa **1.479.760 bytes**. No hubo advertencias del compilador/enlazador;
+el comprobador de tamaños advierte que la partición está cerca de llenarse (4 %
+libre). La tabla binaria de particiones sigue idéntica. Log en
+`build/ir_receiver_build.log`. No se realizó flash ni borrado; quedan pendientes
+las pruebas de recepción real y coexistencia con BLE/Wi-Fi y DS18B20.
