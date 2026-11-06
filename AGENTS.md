@@ -12,7 +12,7 @@
 
 - Mantén `main/main.c` enfocado en la inicialización general.
 - Encapsula la lógica de cada módulo, sus eventos y sus recursos. La gestión
-  Wi-Fi y del aprovisionamiento BLE pertenece a `wifi_manager`.
+  Wi-Fi y del aprovisionamiento BLE pertenece a `components/wifi_manager`.
 - Otros módulos deben consumir la API pública y `WIFI_MANAGER_EVENT`; evita
   duplicar la inicialización del controlador o los manejadores de conectividad.
 - Mantén compatibilidad con FreeRTOS. Evita esperas prolongadas en el flujo
