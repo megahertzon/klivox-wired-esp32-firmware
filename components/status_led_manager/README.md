@@ -1,10 +1,19 @@
 # Status LED manager
 
-Componente C independiente de Wi-Fi/MQTT. RGB de ánodo común a 3,3 V, con una
+Componente C independiente de Wi-Fi/MQTT. RGB de ánodo común a GPIO13, con una
 resistencia por canal: rojo GPIO21, verde GPIO22, azul GPIO23. SETUP pasa a
 GPIO33. No compartir estos pines. La aplicación verifica el mapa antes de tocar
 el LED. Se reservan LEDC low-speed timer 0 y canales 0/1/2; los demás componentes
 actuales no usan LEDC. Revisar esta reserva al agregar otro consumidor PWM.
+
+GPIO13 se configura como salida HIGH constante después de dejar apagados los
+tres canales PWM; permanece alto incluso en OFF o con brillo 0. Es configurable
+mediante `KLIVOX_LED_ANODE_GPIO` y se valida que no comparta pin con RGB ni otros
+periféricos. Mover el ánodo de 3V3 a GPIO13. Las resistencias deben limitar la
+corriente instantánea total de los canales a la capacidad de salida del GPIO;
+el brillo PWM bajo no limita por sí solo la corriente instantánea. Para alimentar
+cargas mayores, usar una etapa externa dimensionada para esa corriente.
+HIGH se garantiza solo después de la inicialización, no durante reset/bootloader.
 
 `linker.lf` coloca en flash los caminos LEDC utilizados desde esta tarea,
 incluidas cinco funciones HAL y los auxiliares internos del driver. Evita
@@ -71,6 +80,8 @@ MQTT_CONNECTING al recibir la conexión del broker; Wi-Fi con IP nunca activa ON
 ## Pruebas físicas
 
 Con equipo apagado mover SETUP a GPIO33 y cablear el RGB con resistencias.
+Conectar el ánodo común a GPIO13. Tras arrancar, medir HIGH en ese pin respecto
+a GND; debe mantenerse alto tanto con OFF como durante los parpadeos.
 Después de cargar el firmware mediante el procedimiento autorizado:
 
 1. Reiniciar: amarillo lento BOOTING (puede ser breve durante el inicio).

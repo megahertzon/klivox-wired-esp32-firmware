@@ -1,4 +1,11 @@
 menu "Klivox RGB status LED"
+    config KLIVOX_LED_ANODE_GPIO
+        int "Common anode GPIO (held HIGH after initialization)"
+        range 0 33
+        default 13
+        help
+            Constant HIGH output, enabled after the RGB channels are off.
+            Size the channel resistors for the total GPIO source current.
     config KLIVOX_LED_RED_GPIO
         int "Red GPIO"
         range 0 33

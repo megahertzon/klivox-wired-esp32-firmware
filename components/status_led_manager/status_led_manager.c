@@ -16,7 +16,8 @@
 static const char *TAG = "KLIVOX_LED";
 static const int s_pins[] = {CONFIG_KLIVOX_LED_RED_GPIO,
                              CONFIG_KLIVOX_LED_GREEN_GPIO,
-                             CONFIG_KLIVOX_LED_BLUE_GPIO};
+                             CONFIG_KLIVOX_LED_BLUE_GPIO,
+                             CONFIG_KLIVOX_LED_ANODE_GPIO};
 static const ledc_channel_t s_channels[] = {LEDC_CHANNEL_0, LEDC_CHANNEL_1, LEDC_CHANNEL_2};
 
 typedef struct {
@@ -167,7 +168,7 @@ esp_err_t status_led_manager_init(void)
     }
     unsigned configured = 0;
     bool timer_configured = false;
-    for (unsigned i = 0; i < 3; ++i) {
+    for (unsigned i = 0; i < sizeof(s_pins) / sizeof(s_pins[0]); ++i) {
         if (!GPIO_IS_VALID_OUTPUT_GPIO(s_pins[i])) {
             result = ESP_ERR_INVALID_ARG;
             goto done;
@@ -203,6 +204,13 @@ esp_err_t status_led_manager_init(void)
         if (result != ESP_OK) goto done;
         ++configured;
     }
+    /* Supply the common anode only after all cathodes are off. This pin is
+     * never PWM-controlled or changed by state/brightness/night-mode updates. */
+    result = gpio_set_level(CONFIG_KLIVOX_LED_ANODE_GPIO, 1);
+    if (result != ESP_OK) goto done;
+    result = gpio_set_direction(CONFIG_KLIVOX_LED_ANODE_GPIO, GPIO_MODE_OUTPUT);
+    if (result != ESP_OK) goto done;
+    ESP_LOGI(TAG, "Common anode GPIO%d held HIGH", CONFIG_KLIVOX_LED_ANODE_GPIO);
     if (xTaskCreate(led_task, "status_led", 3072, NULL, 1, &s_task) != pdPASS) {
         result = ESP_ERR_NO_MEM;
         goto done;

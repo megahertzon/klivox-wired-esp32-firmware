@@ -27,7 +27,8 @@ esp_err_t app_status_init(void)
 {
     const int led_pins[] = {CONFIG_KLIVOX_LED_RED_GPIO,
                             CONFIG_KLIVOX_LED_GREEN_GPIO,
-                            CONFIG_KLIVOX_LED_BLUE_GPIO};
+                            CONFIG_KLIVOX_LED_BLUE_GPIO,
+                            CONFIG_KLIVOX_LED_ANODE_GPIO};
     const int occupied[] = {KLIVOX_SETUP_GPIO, CONFIG_KLIVOX_BUZZER_GPIO,
                             CONFIG_KLIVOX_TEMPERATURE_GPIO, CONFIG_KLIVOX_IR_RX_GPIO,
                             CONFIG_KLIVOX_CONTACT_1_GPIO, CONFIG_KLIVOX_CONTACT_2_GPIO,

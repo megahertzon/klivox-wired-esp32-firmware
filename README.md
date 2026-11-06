@@ -16,13 +16,17 @@ componente antes de los radios y registra el consumidor después de inicializar
 Wi-Fi. Los GPIO RGB son 21/22/23 y SETUP se trasladó a 33. El evento CONNECTING,
 el evento PROVISIONING_ENDED y la instantánea de aprovisionamiento se exponen
 en la API pública Wi-Fi; el gestor LED no depende de ella directamente.
+El ánodo común ahora se conecta a GPIO13, configurado como salida HIGH constante
+tras inicializar los canales apagados. Se puede cambiar con `KLIVOX_LED_ANODE_GPIO`;
+no conmuta con el parpadeo ni con OFF. Dimensionar las resistencias para la
+corriente total suministrada por ese GPIO. Ver los detalles de cableado del componente.
 
 Validación RGB: `idf.py build` con ESP-IDF 5.5.6 completó el enlace y generó
-`build/klivox-wired.bin` de 1.488.576 bytes, con 47.424 bytes libres en la
+`build/klivox-wired.bin` de 1.488.912 bytes, con 47.088 bytes libres en la
 partición de aplicación (3 %). La IRAM queda con solo 32 bytes libres según
 el mapa; cualquier ampliación requiere revisar ese presupuesto. El componente
 incluye una regla de enlace para los caminos LEDC usados solo desde tarea,
-sin editar el SDK. Registro: `build/log/idf_py_stdout_output_18040`.
+sin editar el SDK. Registro: `build/log/idf_py_stdout_output_21212`.
 No se realizó flash ni borrado; las pruebas físicas siguen pendientes.
 
 ## Archivos
