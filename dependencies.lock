@@ -57,6 +57,6 @@ direct_dependencies:
 - espressif/qrcode
 - idf
 - jorgecis/irremoteidf
-manifest_hash: 0736948746f762eea0fd87ecc22f74b22264417a2c4aa59ec923a5bdf312fd7b
+manifest_hash: 264e4389d9f3ce78dae20d3e55f2032e3aab1406778a9c81f2b20a3ecf3fbd55
 target: esp32
 version: 2.0.0

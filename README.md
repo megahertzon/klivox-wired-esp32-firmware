@@ -10,16 +10,17 @@ También captura y decodifica controles IR mediante un VS1838B, como el proyecto
 
 - `main/main.c`: inicialización general; inicia conectividad y retorna sin esperar IP.
   También inicia el módulo de temperatura, incluso si falla la conectividad.
-- `main/wifi_manager.c`: NVS, netif, event loop, Wi-Fi Station, aprovisionamiento,
-  eventos y temporizador de reconexión.
-- `main/wifi_manager.h`: API, eventos y tipos públicos de los mensajes.
-- `main/CMakeLists.txt`: compila exclusivamente `main.c` y `wifi_manager.c`;
-  declara las dependencias de ESP-IDF, QR, `temperature_manager` e `ir_receiver`.
-- `main/Kconfig.projbuild`: conserva BLE y Security 2; agrega los tiempos de
-  reconexión. Elimina los modos del ejemplo que borraban credenciales en cada
-  arranque o repetían el aprovisionamiento periódicamente.
-- `main/idf_component.yml`: conserva QR y declara ESP-IDF `>=5.5.6,<5.6`.
-  `dependencies.lock` fija las versiones resueltas de QR y los controladores del sensor.
+- `main/CMakeLists.txt`: compila exclusivamente `main.c` y declara sus dependencias
+  de `wifi_manager`, `temperature_manager` e `ir_receiver`.
+- `main/idf_component.yml`: declara la versión de ESP-IDF del proyecto
+  (`>=5.5.6,<5.6`). `dependencies.lock` fija las dependencias resueltas.
+- `components/wifi_manager/wifi_manager.c`: NVS, netif, event loop, Wi-Fi Station,
+  aprovisionamiento BLE, eventos y temporizador de reconexión.
+- `components/wifi_manager/include/wifi_manager.h`: API y eventos públicos.
+- `components/wifi_manager/Kconfig`: selección de transporte y seguridad,
+  reintentos del alta inicial, QR y tiempos de reconexión.
+- `components/wifi_manager/idf_component.yml`: dependencia QR y versión de SDK;
+  su CMake declara las dependencias públicas y privadas del componente.
 - `sdkconfig`: conserva la seguridad y partición actuales; incorpora los dos
   parámetros de reconexión y la configuración del sensor al regenerarse en el build.
 - `components/temperature_manager/`: componente reutilizable que encapsula el
@@ -30,12 +31,21 @@ También captura y decodifica controles IR mediante un VS1838B, como el proyecto
 - `sdkconfig.defaults`: parámetros base del ESP32 y ajuste de IRAM para RMT;
   los valores de un `sdkconfig` existente tienen prioridad sobre estos defaults.
 
-`main/app_main.c` se convirtió en los tres archivos de código indicados.
+La lógica original de `main/app_main.c` se separó de la inicialización general
+y ahora reside en `components/wifi_manager`. La cabecera conserva su nombre,
+por lo que los consumidores siguen incluyendo `wifi_manager.h`.
 `main/main_backup.c`, que ya existía, queda intacto y fuera de la compilación.
 La copia original anterior a esta refactorización está en
 `.refactor-backup/wifi-manager-original/`, incluyendo configuración y particiones.
 
 ## Uso y eventos para futuros componentes
+
+Wi-Fi/BLE ahora es un componente independiente, igual que los sensores. Para
+reutilizarlo, copiar la carpeta `components/wifi_manager` completa y agregar
+`wifi_manager` a `PRIV_REQUIRES` del consumidor. El traslado conserva la API,
+la configuración de seguridad y los datos persistentes. Su menú está en
+`Component config → Klivox Wi-Fi manager configuration`.
+Ver [documentación del componente](components/wifi_manager/README.md).
 
 ```c
 #include "wifi_manager.h"
