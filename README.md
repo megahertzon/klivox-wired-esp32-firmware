@@ -6,6 +6,7 @@ Incluye adquisición periódica de temperatura con un DS18B20 externo.
 También captura y decodifica controles IR mediante un VS1838B, como el proyecto
 `on_off_light`, con detección general y salida RAW para señales desconocidas.
 Un buzzer activo emite un pulso corto al capturar una trama IR no truncada.
+Incluye dos entradas NC de puerta/ventana y un pulsador NO con eventos.
 
 ## Archivos
 
@@ -13,8 +14,10 @@ Un buzzer activo emite un pulso corto al capturar una trama IR no truncada.
   También inicia el módulo de temperatura, incluso si falla la conectividad.
 - `main/app_feedback.c`: conecta las capturas IR con el aviso sonoro usando las
   APIs públicas, sin acoplar el driver IR al buzzer.
-- `main/CMakeLists.txt`: compila `main.c` y `app_feedback.c`, y declara sus
-  dependencias de `wifi_manager`, `temperature_manager`, `ir_receiver` y `buzzer`.
+- `main/app_inputs.c`: asigna GPIO y nombres a los contactos/pulsadores y registra
+  sus cambios; `app_inputs.h` define los índices de la aplicación.
+- `main/CMakeLists.txt`: compila `main.c`, `app_feedback.c` y `app_inputs.c`, con
+  dependencias de conectividad, sensores, buzzer y `digital_inputs`.
 - `main/idf_component.yml`: declara la versión de ESP-IDF del proyecto
   (`>=5.5.6,<5.6`). `dependencies.lock` fija las dependencias resueltas.
 - `components/wifi_manager/wifi_manager.c`: NVS, netif, event loop, Wi-Fi Station,
@@ -33,6 +36,8 @@ Un buzzer activo emite un pulso corto al capturar una trama IR no truncada.
   y consulta de la última captura. Usa `jorgecis/irremoteidf` 1.0.2.
 - `components/buzzer/`: buzzer activo mediante GPIO y temporizador de apagado,
   con solicitudes de pulso asíncronas y sin dependencias externas.
+- `components/digital_inputs/`: entradas con pull-up, antirrebote independiente,
+  eventos ESP-IDF, callback y consulta del último estado estable.
 - `sdkconfig.defaults`: parámetros base del ESP32 y ajuste de IRAM para RMT;
   los valores de un `sdkconfig` existente tienen prioridad sobre estos defaults.
 
@@ -252,8 +257,9 @@ cache-safe de la configuración previa. No se cambió la configuración Wi-Fi/BL
 la tabla de particiones ni el SDK. El margen de IRAM es distinto del espacio
 libre en flash y debe revisarse al ampliar el firmware. No se ha validado
 todavía la integración de estos componentes en otro SoC.
-La compilación con IR deja **396 bytes libres en IRAM**; la partición de
-aplicación conserva **55.248 bytes libres (aproximadamente 4 %)** con el buzzer.
+La compilación con IR, buzzer y entradas deja **396 bytes libres en IRAM**;
+la partición de aplicación conserva **52.000 bytes libres (3 % según el
+comprobador de tamaños)**.
 
 Este ajuste se aplica al `sdkconfig` local y se incluye en `sdkconfig.defaults`
 para nuevas configuraciones. Si se conserva un `sdkconfig` anterior, desactivar
@@ -380,7 +386,7 @@ tarea IR y sin generar sonidos al inicializar. Una confirmación sonora indica
 recepción, no que el aire haya ejecutado el comando.
 
 En `menuconfig → Component config → Klivox active buzzer` se cambian GPIO y
-duración. La aplicación comprueba conflictos con GPIO18 (DS18B20) y GPIO27 (IR)
+duración. La aplicación comprueba conflictos con sensores y pulsadores
 antes de configurar la salida. Ver el circuito con NPN, resistencia de base,
 pull-down y alimentación externa en
 [components/buzzer/README.md](components/buzzer/README.md).
@@ -394,3 +400,50 @@ siguen idénticas; solo se añadieron dos valores efectivos de configuración,
 GPIO25 y pulso de 80 ms. El log está en `build/buzzer_build.log`. No se ejecutó
 flash ni borrado; el sonido y la coexistencia física con sensores/radios quedan
 pendientes de probar con el circuito conectado.
+
+## Contactos NC y pulsadores NO
+
+Cada contacto/pulsador se conecta entre su GPIO y **GND común**, con una
+resistencia individual de **10 kΩ entre GPIO y 3V3**. Son entradas para contactos
+secos. Confirmar que el sensor NC cierre el circuito con la puerta cerrada.
+
+| Entrada | GPIO | Activo | Reposo |
+| --- | --- | --- | --- |
+| Contacto NC 1 | 32 | HIGH, abierto | LOW, cerrado |
+| Contacto NC 2 | 26 | HIGH, abierto | LOW, cerrado |
+| Pulsador NO encendido/apagado | 19 | LOW, pulsado | HIGH, liberado |
+
+Un cable cortado o un NC sin conectar también se lee abierto. Los GPIO se
+configuran en **Klivox digital inputs**; GPIO18, GPIO27 y GPIO25 conservan sus
+funciones. Las tres entradas tienen antirrebote independiente de 50 ms.
+
+`main/app_inputs.c` configura `digital_inputs` y registra apertura/cierre,
+pulsación/liberación y la acción solicitada. Solo se preparan entradas y eventos:
+no hay transmisión IR ni cambio del estado del aire. No hay repetición al
+mantener un botón; un botón pulsado al arrancar publica estado inicial sin
+solicitar una acción.
+
+La API pública `digital_inputs.h` permite suscribirse a
+`DIGITAL_INPUTS_EVENT_CHANGED` en `DIGITAL_INPUTS_EVENT`, consultar una instantánea
+o recibir un callback en la tarea de entradas. Cada estado lleva índice, GPIO,
+nivel, indicador activo, indicador inicial, contador y timestamp. Los eventos
+iniciales no deben interpretarse como órdenes. Las publicaciones no esperan si
+la cola está llena; se registra el descarte y la consulta permite reconciliar
+el estado. La tarea y el servicio GPIO se instalan en CPU1, como IR.
+
+Ver [API, cableado y pruebas físicas](components/digital_inputs/README.md).
+La integración en Zigbee queda preparada mediante el componente independiente;
+se deberá elegir el mapa de pines de esa placa.
+
+GPIO21 y GPIO22 quedan libres en esta tarjeta; se retiraron los pulsadores de
+subir y bajar temperatura de la configuración y de los eventos de aplicación.
+
+Validación de esta tarjeta: `idf.py build` finalizó con código 0 en ESP-IDF
+5.5.6, sin advertencias de compilador/enlazador. Firmware de **1.484.000 bytes**,
+con 52.000 bytes libres en la partición (3 % según el comprobador de tamaños)
+y 396 bytes de IRAM. Se mantiene el aviso por el margen de flash. Se verificaron
+idénticos los drivers de Wi-Fi, IR, temperatura y buzzer y la tabla binaria de
+particiones; la configuración efectiva solo añade los cinco parámetros de las
+tres entradas respecto de la versión anterior sin contactos/pulsadores.
+Log: `build/digital_inputs_build.log`. No se realizó flash ni borrado;
+quedan pendientes las pruebas físicas con GPIO32, GPIO26 y GPIO19.

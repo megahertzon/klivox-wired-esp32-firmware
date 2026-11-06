@@ -1,0 +1,32 @@
+menu "Klivox digital inputs"
+
+    config KLIVOX_CONTACT_1_GPIO
+        int "NC contact 1 GPIO (HIGH = open)"
+        range 0 48
+        default 32
+
+    config KLIVOX_CONTACT_2_GPIO
+        int "NC contact 2 GPIO (HIGH = open)"
+        range 0 48
+        default 26
+
+    config KLIVOX_CONTACT_DEBOUNCE_MS
+        int "NC contacts debounce (ms)"
+        range 10 1000
+        default 50
+
+    config KLIVOX_BUTTON_POWER_GPIO
+        int "NO power toggle button GPIO (LOW = pressed)"
+        range 0 48
+        default 19
+
+    config KLIVOX_BUTTON_DEBOUNCE_MS
+        int "NO buttons debounce (ms)"
+        range 10 1000
+        default 50
+        help
+            Connect each dry contact/button between its input and GND.
+            Use a separate external 10 kOhm pull-up to 3.3 V per input.
+            Debounce windows are independent. GPIOs must be free and distinct.
+
+endmenu

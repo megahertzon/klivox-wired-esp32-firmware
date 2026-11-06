@@ -10,8 +10,11 @@ static bool s_ready;
 esp_err_t app_feedback_init(void)
 {
     if (CONFIG_KLIVOX_BUZZER_GPIO == CONFIG_KLIVOX_IR_RX_GPIO ||
-        CONFIG_KLIVOX_BUZZER_GPIO == CONFIG_KLIVOX_TEMPERATURE_GPIO) {
-        ESP_LOGE("app_feedback", "Buzzer GPIO conflicts with IR or DS18B20");
+        CONFIG_KLIVOX_BUZZER_GPIO == CONFIG_KLIVOX_TEMPERATURE_GPIO ||
+        CONFIG_KLIVOX_BUZZER_GPIO == CONFIG_KLIVOX_CONTACT_1_GPIO ||
+        CONFIG_KLIVOX_BUZZER_GPIO == CONFIG_KLIVOX_CONTACT_2_GPIO ||
+        CONFIG_KLIVOX_BUZZER_GPIO == CONFIG_KLIVOX_BUTTON_POWER_GPIO) {
+        ESP_LOGE("app_feedback", "Buzzer GPIO conflicts with an input");
         return ESP_ERR_INVALID_ARG;
     }
     const buzzer_config_t config = { .gpio_num = CONFIG_KLIVOX_BUZZER_GPIO };
