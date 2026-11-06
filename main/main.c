@@ -1,5 +1,6 @@
 #include "esp_log.h"
 #include "app_feedback.h"
+#include "app_inputs.h"
 #include "ir_receiver.h"
 #include "sdkconfig.h"
 #include "temperature_manager.h"
@@ -54,6 +55,14 @@ void app_main(void)
     }
     if (ir_err != ESP_OK) {
         ESP_LOGE("KLIVOX", "IR initialization failed: %s (check GPIO conflict/heap)", esp_err_to_name(ir_err));
+    }
+
+    err = app_inputs_init();
+    if (err == ESP_OK) {
+        err = app_inputs_start();
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE("KLIVOX", "Digital inputs initialization failed: %s (check GPIO conflicts)", esp_err_to_name(err));
     }
 
     /* Connectivity, temperature and IR reception continue independently. */
