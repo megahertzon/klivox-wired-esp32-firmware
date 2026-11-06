@@ -1,4 +1,5 @@
 #include "esp_log.h"
+#include "ir_receiver.h"
 #include "sdkconfig.h"
 #include "temperature_manager.h"
 #include "wifi_manager.h"
@@ -6,6 +7,19 @@
 void app_main(void)
 {
     ESP_LOGI("KLIVOX", "Starting Klivox Wired");
+
+    /* Allocate the IR library's capture buffers before the radios use heap.
+     * Capture itself starts below, after the other modules initialize. */
+    const ir_receiver_config_t ir_config = {
+        .gpio_num = CONFIG_KLIVOX_IR_RX_GPIO,
+        .capture_buffer_entries = CONFIG_KLIVOX_IR_RX_BUFFER_SIZE,
+        .frame_timeout_ms = CONFIG_KLIVOX_IR_RX_TIMEOUT_MS,
+#ifdef CONFIG_KLIVOX_IR_DUMP_RAW
+        .dump_raw = true,
+#endif
+    };
+    esp_err_t ir_err = ir_config.gpio_num == CONFIG_KLIVOX_TEMPERATURE_GPIO
+                       ? ESP_ERR_INVALID_ARG : ir_receiver_init(&ir_config);
 
     esp_err_t err = wifi_manager_init();
     if (err == ESP_OK) {
@@ -28,5 +42,12 @@ void app_main(void)
         ESP_LOGE("KLIVOX", "Temperature sensor initialization failed: %s", esp_err_to_name(err));
     }
 
-    /* Connectivity and temperature acquisition continue in their own tasks. */
+    if (ir_err == ESP_OK) {
+        ir_err = ir_receiver_start();
+    }
+    if (ir_err != ESP_OK) {
+        ESP_LOGE("KLIVOX", "IR initialization failed: %s (check GPIO conflict/heap)", esp_err_to_name(ir_err));
+    }
+
+    /* Connectivity, temperature and IR reception continue independently. */
 }

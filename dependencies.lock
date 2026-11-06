@@ -31,11 +31,32 @@ dependencies:
     source:
       type: idf
     version: 5.5.6
+  jorgecis/irremoteidf:
+    component_hash: 16bc7e03ea711fa7118d85803c76d314f0fee78f160f610c337439ac1ecbba68
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    targets:
+    - esp32
+    - esp32s2
+    - esp32s3
+    - esp32c2
+    - esp32c3
+    - esp32c5
+    - esp32c6
+    - esp32h2
+    - esp32p4
+    version: 1.0.2
 direct_dependencies:
 - espressif/ds18b20
 - espressif/onewire_bus
 - espressif/qrcode
 - idf
-manifest_hash: 70e6eb83f58c88a4dcf1be483a38ce39e1ae23d9df2cbace30d658b1b37c2b8a
+- jorgecis/irremoteidf
+manifest_hash: 0736948746f762eea0fd87ecc22f74b22264417a2c4aa59ec923a5bdf312fd7b
 target: esp32
 version: 2.0.0
