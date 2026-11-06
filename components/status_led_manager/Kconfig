@@ -1,0 +1,21 @@
+menu "Klivox RGB status LED"
+    config KLIVOX_LED_RED_GPIO
+        int "Red GPIO"
+        range 0 33
+        default 21
+    config KLIVOX_LED_GREEN_GPIO
+        int "Green GPIO"
+        range 0 33
+        default 22
+    config KLIVOX_LED_BLUE_GPIO
+        int "Blue GPIO"
+        range 0 33
+        default 23
+    config KLIVOX_LED_BRIGHTNESS
+        int "Initial logical brightness (0-255)"
+        range 0 255
+        default 16
+    config KLIVOX_LED_HIDE_ONLINE
+        bool "Turn LED off when ONLINE"
+        default n
+endmenu

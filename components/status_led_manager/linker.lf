@@ -1,0 +1,22 @@
+# This board uses LEDC only from the LED task, never from an ISR or fade service.
+# Keep those task-only paths in flash; retain the SDK's IRAM policy elsewhere.
+[scheme:klivox_ledc_task_flash]
+entries:
+    text -> flash_text
+    iram -> flash_text
+
+[mapping:klivox_ledc_task_driver]
+archive: libesp_driver_ledc.a
+entries:
+    if LEDC_CTRL_FUNC_IN_IRAM = n:
+        ledc (klivox_ledc_task_flash)
+
+[mapping:klivox_ledc_task_hal]
+archive: libhal.a
+entries:
+    if LEDC_CTRL_FUNC_IN_IRAM = n:
+        ledc_hal_iram:ledc_hal_set_duty_start (klivox_ledc_task_flash)
+        ledc_hal_iram:ledc_hal_set_duty_int_part (klivox_ledc_task_flash)
+        ledc_hal_iram:ledc_hal_set_fade_param (klivox_ledc_task_flash)
+        ledc_hal_iram:ledc_hal_ls_channel_update (klivox_ledc_task_flash)
+        ledc_hal_iram:ledc_hal_set_hpoint (klivox_ledc_task_flash)

@@ -18,6 +18,8 @@ typedef enum {
     WIFI_MANAGER_EVENT_PROVISIONING_STARTED,
     WIFI_MANAGER_EVENT_PROVISIONING_SUCCESS,
     WIFI_MANAGER_EVENT_PROVISIONING_FAILED,
+    WIFI_MANAGER_EVENT_CONNECTING,            /* A station attempt is starting. */
+    WIFI_MANAGER_EVENT_PROVISIONING_ENDED,    /* SDK resources released. */
 } wifi_manager_event_id_t;
 
 typedef struct {
@@ -63,6 +65,7 @@ esp_err_t wifi_manager_reset_credentials(void);
 
 /** Thread-safe snapshots; false before initialization. Connected means IPv4 ready. */
 bool wifi_manager_is_connected(void);
+bool wifi_manager_is_provisioning(void);
 
 /** Saved credentials found at boot, or initial provisioning validated with IP.
  * This does not guarantee the AP is currently available. Never cleared by an

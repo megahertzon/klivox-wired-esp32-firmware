@@ -7,6 +7,23 @@ También captura y decodifica controles IR mediante un VS1838B, como el proyecto
 `on_off_light`, con detección general y salida RAW para señales desconocidas.
 Un buzzer activo emite un pulso corto al capturar una trama IR no truncada.
 Incluye dos entradas NC de puerta/ventana y un pulsador NO con eventos.
+Incluye un LED RGB de ánodo común mediante `components/status_led_manager/`,
+con brillo bajo, prioridades liberables y actualización mediante eventos Wi-Fi.
+Ver [API, patrones, cableado y pruebas físicas](components/status_led_manager/README.md).
+
+La integración RGB está en `main/app_status.c/.h`; `main/main.c` inicia el
+componente antes de los radios y registra el consumidor después de inicializar
+Wi-Fi. Los GPIO RGB son 21/22/23 y SETUP se trasladó a 33. El evento CONNECTING,
+el evento PROVISIONING_ENDED y la instantánea de aprovisionamiento se exponen
+en la API pública Wi-Fi; el gestor LED no depende de ella directamente.
+
+Validación RGB: `idf.py build` con ESP-IDF 5.5.6 completó el enlace y generó
+`build/klivox-wired.bin` de 1.488.576 bytes, con 47.424 bytes libres en la
+partición de aplicación (3 %). La IRAM queda con solo 32 bytes libres según
+el mapa; cualquier ampliación requiere revisar ese presupuesto. El componente
+incluye una regla de enlace para los caminos LEDC usados solo desde tarea,
+sin editar el SDK. Registro: `build/log/idf_py_stdout_output_18040`.
+No se realizó flash ni borrado; las pruebas físicas siguen pendientes.
 
 ## Archivos
 
@@ -97,6 +114,8 @@ deben ser cortos y delegar operaciones de red a sus respectivas tareas.
 | `WIFI_MANAGER_EVENT_PROVISIONING_STARTED` | Sin datos |
 | `WIFI_MANAGER_EVENT_PROVISIONING_SUCCESS` | Sin datos; credenciales validadas con IP |
 | `WIFI_MANAGER_EVENT_PROVISIONING_FAILED` | `wifi_manager_provisioning_failed_event_t`: motivo y error |
+| `WIFI_MANAGER_EVENT_CONNECTING` | Sin datos; comienza un intento Station |
+| `WIFI_MANAGER_EVENT_PROVISIONING_ENDED` | Sin datos; recursos de aprovisionamiento liberados |
 
 `wifi_manager_is_connected()` informa si hay IPv4, no solamente asociación al AP.
 `wifi_manager_is_provisioned()` indica que se encontraron credenciales guardadas
@@ -247,8 +266,15 @@ esperada, ilustrativa y todavía no medida en el hardware, es:
 I (...) temperature_manager: 1-Wire ready on GPIO18; sampling period 5000 ms
 I (...) temperature_manager: DS18B20 detected on GPIO18, ROM=...
 I (...) temperature_manager: DS18B20: 26.50 C
+I (...) KLIVOX_LED: State at temperature sample: WIFI_CONNECTED (sensor=ESP_OK)
 I (...) temperature_manager: DS18B20: 26.56 C
 ```
+
+Después de cada intento de lectura, `main/app_status.c` registra una instantánea
+del estado efectivo del LED con el tag `KLIVOX_LED`, incluso si falla el sensor
+(el campo `sensor` muestra el error). Usa el callback `on_sample`, sin acoplar
+el componente de temperatura al LED ni modificar el patrón. Si el LED no pudo
+inicializarse, muestra `NOT_INITIALIZED`.
 
 ### Configuración de memoria en el ESP32 clásico
 
@@ -438,7 +464,7 @@ Ver [API, cableado y pruebas físicas](components/digital_inputs/README.md).
 La integración en Zigbee queda preparada mediante el componente independiente;
 se deberá elegir el mapa de pines de esa placa.
 
-GPIO21 y GPIO22 quedan libres en esta tarjeta; se retiraron los pulsadores de
+GPIO21 y GPIO22 ahora pertenecen al LED RGB; se retiraron los pulsadores de
 subir y bajar temperatura de la configuración y de los eventos de aplicación.
 
 Validación de esta tarjeta: `idf.py build` finalizó con código 0 en ESP-IDF
@@ -454,10 +480,11 @@ quedan pendientes las pruebas físicas con GPIO32, GPIO26 y GPIO19.
 
 ## Botón oculto SETUP: restablecimiento Wi-Fi
 
-Cablear un pulsador **normalmente abierto entre GPIO23 y GND**. Usa pull-up
-interno y nivel activo LOW; no requiere resistencia externa. GPIO23 está libre
+Cablear un pulsador **normalmente abierto entre GPIO33 y GND**. Usa pull-up
+interno y nivel activo LOW; no requiere resistencia externa. GPIO33 está libre
 en la configuración actual (temperatura 18, IR 27, buzzer 25, contactos 32/26,
-POWER 19). Si se cambia ese mapa, el módulo rechaza conflictos antes de tocar el pin.
+POWER 19 y RGB 21/22/23). Mover el cable de SETUP de GPIO23 a GPIO33.
+Si se cambia ese mapa, la aplicación valida conflictos antes de iniciar el LED.
 
 `components/setup_button_manager/` configura el GPIO y usa interrupciones para
 despertar una tarea de prioridad 1 en CPU1, compartiendo el servicio GPIO con

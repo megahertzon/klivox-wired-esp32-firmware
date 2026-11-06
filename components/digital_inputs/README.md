@@ -5,7 +5,7 @@ con pull-up, nivel activo y antirrebote independientes. No depende de Wi-Fi,
 Zigbee, IR ni actuadores. La asignación y los nombres de Klivox están en
 `main/app_inputs.c`, fuera del driver. Esta tarjeta configura tres entradas;
 el driver conserva capacidad para hasta cinco en otras placas. GPIO21 y GPIO22
-quedan libres, sin entradas ni eventos de subir/bajar temperatura.
+pertenecen al LED RGB, sin entradas ni eventos de subir/bajar temperatura.
 
 ## Cableado predeterminado
 

@@ -41,15 +41,20 @@ la recepción IR. El movimiento del componente no cambia ese orden.
 - `wifi_manager_reset_credentials()`: solicita borrado exclusivo de Station y
   reinicio de BLE; resultado asíncrono mediante eventos.
 - `wifi_manager_is_connected()`: instantánea de disponibilidad IPv4.
+- `wifi_manager_is_provisioning()`: instantánea de aprovisionamiento activo,
+  hasta terminar la liberación de recursos del SDK.
 - `wifi_manager_is_provisioned()`: credenciales detectadas al arrancar o alta
   inicial validada; no depende de que el AP esté disponible en ese momento.
 
 El event base público `WIFI_MANAGER_EVENT` ofrece `CONNECTED`, `DISCONNECTED`,
-`PROVISIONING_STARTED`, `PROVISIONING_SUCCESS` y `PROVISIONING_FAILED` con el
+`PROVISIONING_STARTED`, `PROVISIONING_SUCCESS`, `PROVISIONING_FAILED`,
+`CONNECTING` y `PROVISIONING_ENDED` con el
 prefijo `WIFI_MANAGER_EVENT_`. Tipos, datos y límites de los callbacks se
 describen en `include/wifi_manager.h`. Los callbacks deben ser cortos y delegar
 operaciones de red a otras tareas. Si la cola de eventos se llena, el aviso
 puede descartarse; las consultas de estado permiten reconciliar al consumidor.
+CONNECTING y PROVISIONING_ENDED no tienen datos. El segundo permite liberar
+indicadores BLE después de finalizar el SDK, incluso si no terminó con éxito.
 
 ## Configuración y persistencia
 

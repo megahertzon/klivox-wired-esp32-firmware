@@ -6,9 +6,15 @@
 #include "temperature_manager.h"
 #include "wifi_manager.h"
 #include "app_setup.h"
+#include "app_status.h"
+#include "status_led_manager.h"
 
 void app_main(void)
 {
+    const esp_err_t led_err = app_status_init();
+    if (led_err != ESP_OK) {
+        ESP_LOGE("KLIVOX", "Status LED initialization failed: %s", esp_err_to_name(led_err));
+    }
     /* Establish the inactive buzzer level before radios and other drivers. */
     const esp_err_t feedback_err = app_feedback_init();
     ESP_LOGI("KLIVOX", "Starting Klivox Wired");
@@ -32,16 +38,24 @@ void app_main(void)
 
     esp_err_t err = wifi_manager_init();
     if (err == ESP_OK) {
-        /* Future modules can register WIFI_MANAGER_EVENT handlers here. */
+        if (led_err == ESP_OK) {
+            esp_err_t status_err = app_status_register_connectivity();
+            if (status_err != ESP_OK) {
+                ESP_LOGE("KLIVOX", "Cannot register LED events: %s", esp_err_to_name(status_err));
+                (void)status_led_manager_set_condition(STATUS_LED_ERROR, true);
+            }
+        }
         err = wifi_manager_start();
     }
     if (err != ESP_OK) {
         ESP_LOGE("KLIVOX", "Connectivity initialization failed: %s", esp_err_to_name(err));
+        (void)status_led_manager_set_condition(STATUS_LED_ERROR, true);
     }
 
     const temperature_manager_config_t temperature_config = {
         .gpio_num = CONFIG_KLIVOX_TEMPERATURE_GPIO,
         .sample_period_ms = CONFIG_KLIVOX_TEMPERATURE_PERIOD_SECONDS * 1000U,
+        .on_sample = app_status_on_temperature_sample,
     };
     err = temperature_manager_init(&temperature_config);
     if (err == ESP_OK) {

@@ -226,6 +226,7 @@ static void connect_station(void)
     if (!can_reconnect()) {
         return;
     }
+    publish(WIFI_MANAGER_EVENT_CONNECTING, NULL, 0);
     esp_err_t err = esp_wifi_connect();
     if (err != ESP_OK) {
         ESP_LOGW(TAG, "Connection request failed: %s", esp_err_to_name(err));
@@ -259,6 +260,7 @@ static void event_handler(void *arg, esp_event_base_t base, int32_t id, void *da
     if (base == WIFI_MANAGER_INTERNAL_EVENT && id == PROVISIONING_RELEASED) {
         if (!(xEventGroupGetBits(s_state) & RESET_BIT)) {
             xEventGroupClearBits(s_state, PROVISIONING_BIT);
+            publish(WIFI_MANAGER_EVENT_PROVISIONING_ENDED, NULL, 0);
             if (xEventGroupGetBits(s_state) & PROVISIONED_BIT) {
                 xEventGroupSetBits(s_state, RECONNECT_BIT);
                 schedule_reconnect();
@@ -856,6 +858,11 @@ esp_err_t wifi_manager_reset_credentials(void)
 bool wifi_manager_is_connected(void)
 {
     return s_state && (xEventGroupGetBits(s_state) & CONNECTED_BIT) != 0;
+}
+
+bool wifi_manager_is_provisioning(void)
+{
+    return s_state && (xEventGroupGetBits(s_state) & PROVISIONING_BIT) != 0;
 }
 
 bool wifi_manager_is_provisioned(void)

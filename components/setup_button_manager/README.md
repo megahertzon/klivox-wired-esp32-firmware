@@ -1,7 +1,8 @@
 # SETUP button manager
 
 Componente ESP-IDF para un pulsador activo LOW con pull-up interno. En Klivox
-Wired se usa GPIO23, 50 ms de antirrebote y 5000 ms de pulsación continua.
+Wired se usa GPIO33, 50 ms de antirrebote y 5000 ms de pulsación continua.
+Mover el cable de SETUP de GPIO23 a GPIO33; GPIO23 ahora pertenece al LED azul.
 No depende de Wi-Fi, NVS ni buzzer: notifica mediante un callback de aplicación.
 
 Agregar `setup_button_manager` a `PRIV_REQUIRES`, incluir

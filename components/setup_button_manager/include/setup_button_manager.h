@@ -5,7 +5,7 @@
 #include "esp_err.h"
 
 #ifndef KLIVOX_SETUP_GPIO
-#define KLIVOX_SETUP_GPIO GPIO_NUM_23
+#define KLIVOX_SETUP_GPIO GPIO_NUM_33
 #endif
 #ifndef KLIVOX_SETUP_HOLD_MS
 #define KLIVOX_SETUP_HOLD_MS 5000
